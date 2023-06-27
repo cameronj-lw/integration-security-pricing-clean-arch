@@ -1,0 +1,10 @@
+{
+  "ExpandedNodes": [
+    "",
+    "\\application",
+    "\\infrastructure",
+    "\\interface"
+  ],
+  "SelectedNode": "\\infrastructure\\sql_repositories.py",
+  "PreviewInSolutionExplorer": false
+}
