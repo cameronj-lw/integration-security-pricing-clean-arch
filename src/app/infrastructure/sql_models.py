@@ -19,7 +19,7 @@ from app.domain.repositories import (
     , PriceAuditEntryRepository, PriceSourceRepository, PriceTypeRepository
 )
 
-from app.infrastructure.sql_tables import MonitorTable
+from app.infrastructure.sql_tables import MGMTDBMonitorTable
 from app.infrastructure.util.date import get_current_bday, get_previous_bday
 
 
@@ -159,7 +159,7 @@ class MGMTDBPriceFeed(PriceFeed):
                 continue
             for (run_group, run_names) in val:
                 for run_name in run_names:
-                    mon = MonitorTable().read(scenario=MonitorTable().base_scenario, data_date=data_date
+                    mon = MGMTDBMonitorTable().read(scenario=MGMTDBMonitorTable().base_scenario, data_date=data_date
                                                 , run_group=run_group, run_name=run_name, run_type='RUN')
                     error = mon[mon['run_status'] == 1]
                     if len(error.index):
@@ -171,7 +171,7 @@ class MGMTDBPriceFeed(PriceFeed):
         max_ts = datetime.datetime.fromordinal(1)  # beginning of time
         for (run_group, run_names) in self.run_groups_and_names['PRICED']:
             for run_name in run_names:
-                mon = MonitorTable().read(scenario=MonitorTable().base_scenario, data_date=data_date
+                mon = MGMTDBMonitorTable().read(scenario=MGMTDBMonitorTable().base_scenario, data_date=data_date
                                             , run_group=run_group, run_name=run_name, run_type='RUN')
                 complete = mon[mon['run_status'] == 0]
                 if not len(complete.index):
@@ -183,7 +183,7 @@ class MGMTDBPriceFeed(PriceFeed):
         res, max_ts = False, datetime.datetime.fromordinal(1)  # beginning of time
         for (run_group, run_names) in self.run_groups_and_names['IN_PROGRESS']:
             for run_name in run_names:
-                mon = MonitorTable().read(scenario=MonitorTable().base_scenario, data_date=data_date
+                mon = MGMTDBMonitorTable().read(scenario=MGMTDBMonitorTable().base_scenario, data_date=data_date
                                             , run_group=run_group, run_name=run_name, run_type='RUN')
                 in_progress = mon[mon['run_status'] == (-1 | 0)]  # include "success" here in case some are success and others not started
                 if len(in_progress.index):
@@ -198,7 +198,7 @@ class MGMTDBPriceFeed(PriceFeed):
             return False, datetime.datetime.now()
         for (run_group, run_names) in self.run_groups_and_names['PENDING']:
             for run_name in run_names:
-                mon = MonitorTable().read(scenario=MonitorTable().base_scenario, data_date=data_date
+                mon = MGMTDBMonitorTable().read(scenario=MGMTDBMonitorTable().base_scenario, data_date=data_date
                                             , run_group=run_group, run_name=run_name, run_type='RUN')
                 complete = mon[mon['run_status'] == 0]
                 if not len(complete.index):

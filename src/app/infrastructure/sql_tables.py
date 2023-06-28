@@ -4,13 +4,38 @@
 import sqlalchemy
 from sqlalchemy import sql
 
-from app.infrastructure.util.table import ScenarioTable
+from app.infrastructure.util.table import BaseTable, ScenarioTable
+
+
+"""
+COREDB
+"""
+class CoreDBManualPricingSecurityTable(BaseTable):
+	config_section = 'coredb'
+	schema = 'pricing'
+	table_name = 'manual_pricing_security'
+
+	def read(self, exclude_deleted=True):
+		"""
+		Read all entries, excluding those with "is_deleted" by default
+
+		:param exclude_deleted: Whether to exclude those with "is_deleted"
+		:return: DataFrame
+		"""		
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		if exclude_deleted:
+			stmt = stmt.where(self.c.is_deleted == False)
+		return self.execute_read(stmt)
 
 
 """
 LWDB
 """
-class CalendarTable(ScenarioTable):
+class LWDBCalendarTable(ScenarioTable):
 	config_section = 'lwdb'
 	table_name = 'calendar'
 
@@ -37,7 +62,7 @@ class CalendarTable(ScenarioTable):
 """
 MGMTDB
 """
-class MonitorTable(ScenarioTable):
+class MGMTDBMonitorTable(ScenarioTable):
 	config_section = 'mgmtdb'
 	table_name = 'monitor'
 

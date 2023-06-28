@@ -1,6 +1,7 @@
 
 # core python
 import datetime
+import logging
 
 # pypi
 from flask import Blueprint, current_app
@@ -10,9 +11,6 @@ from flask_restx import Api, Resource
 # native
 # from app.application.query_handlers import PriceFeedWithStatusQueryHandler
 from app.interface.formatters import DefaultRESTFormatter
-from app.interface.validators import (
-    ManualPricingSecuritySchema
-)
 
 
 blueprint = Blueprint('blueprint', __name__)
@@ -20,15 +18,6 @@ api = Api(blueprint)
 CORS(blueprint)
 
 
-class InvalidPayloadException(Exception):
-    pass
-
-
-def validate_payload(payload, schema):
-    """ Generic function to validate payloads """
-    errors = schema.validate(payload)
-    if errors:
-        raise InvalidPayloadException(errors)
 
 
 
@@ -132,19 +121,35 @@ class ManualPricingSecurity(Resource):
 
     def post(self):
         payload = api.payload
-        # Validate payload. If no exception is thrown here, it passed.
         try:
-            validate_payload(payload, ManualPricingSecuritySchema())
-        except InvalidPayloadException as e:
-            return formatter.exception(e)
-        return  # TODO: implement
+            command_handler = current_app.config['manual_pricing_security_command_handler']
+            row_cnt = command_handler.handle_post(payload)
+            return self.formatter.success_post(row_cnt)
+        except Exception as e:
+            return self.formatter.exception(e)
     
     def get(self):
-        return  # TODO: implement
+        try:
+            # Get query handler, based on app config
+            query_handler = current_app.config['manual_pricing_security_query_handler']
+            # Get feeds' statuses
+            manual_pricing_securities = query_handler.handle()  # query_handler.repo.get(data_date, feeds)
+            # manual_pricing_securities should be a list of Securities.
+            # Need to format into list (desired format for result):
+            result_list = [{'lw_id': sec.lw_id} for sec in manual_pricing_securities]
+            # Return standard format
+            return self.formatter.success_get(result_list)
+        except Exception as e:
+            return self.formatter.exception(e)
 
     def delete(self):
         payload = api.payload
-        return  # TODO: implement
+        try:
+            command_handler = current_app.config['manual_pricing_security_command_handler']
+            row_cnt = command_handler.handle_delete(payload)
+            return self.formatter.success_delete(row_cnt)
+        except Exception as e:
+            return self.formatter.exception(e)
     
 @api.route('/api/pricing/audit-trail/<string:price_date>')
 class PricingAuditTrail(Resource):

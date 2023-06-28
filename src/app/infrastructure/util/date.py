@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import calendar
 
 
-from app.infrastructure.sql_tables import CalendarTable
+from app.infrastructure.sql_tables import LWDBCalendarTable
 
 
 def generate_eom_dates(start_date, end_date=None, include_end_date=True):

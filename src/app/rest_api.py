@@ -10,11 +10,16 @@ from flask import Flask
 
 # native
 from application.query_handlers import (
-    PriceFeedWithStatusQueryHandler, PriceAuditReasonQueryHandler
+    PriceFeedWithStatusQueryHandler, PriceAuditReasonQueryHandler,
+    ManualPricingSecurityQueryHandler
 )
-from application.services import PriceFeedService
+from application.command_handlers import (
+    PriceFeedCommandHandler, SecurityCommandHandler
+)
 from infrastructure.util.config import AppConfig
-from infrastructure.sql_repositories import MGMTDBPriceFeedWithStatusRepository
+from infrastructure.sql_repositories import (
+    MGMTDBPriceFeedWithStatusRepository, CoreDBManualPricingSecurityRepository
+)
 from interface.routes import blueprint  # import routes
 
 
@@ -25,6 +30,8 @@ app = Flask(__name__)
 
 # Initialize query handlers
 price_feed_with_status_query_handler = PriceFeedWithStatusQueryHandler(MGMTDBPriceFeedWithStatusRepository())
+manual_pricing_security_command_handler = SecurityCommandHandler(CoreDBManualPricingSecurityRepository())
+manual_pricing_security_query_handler = ManualPricingSecurityQueryHandler(CoreDBManualPricingSecurityRepository())
 price_audit_reason_query_handler = PriceAuditReasonQueryHandler()
 
 # Initialize services
@@ -32,6 +39,8 @@ price_audit_reason_query_handler = PriceAuditReasonQueryHandler()
 
 # Inject dependencies into the Flask app context
 app.config['feed_status_query_handler'] = price_feed_with_status_query_handler
+app.config['manual_pricing_security_command_handler'] = manual_pricing_security_command_handler
+app.config['manual_pricing_security_query_handler'] = manual_pricing_security_query_handler
 app.config['audit_reason_query_handler'] = price_audit_reason_query_handler
 # app.config['price_feed_service'] = price_feed_service
 

@@ -14,7 +14,7 @@ from app.domain.models import (
 
 class SecurityRepository(ABC):
     @abstractmethod
-    def create(self, security: Union[Security, List[Security]]) -> Union[Security, List[Security]]:
+    def create(self, security: Union[Security, List[Security]]) -> int:
         pass
 
     @abstractmethod

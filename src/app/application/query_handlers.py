@@ -6,8 +6,10 @@ import datetime
 from typing import List, Optional
 
 # native
-from app.domain.models import PriceFeed, PriceFeedWithStatus
-from app.domain.repositories import PriceFeedWithStatusRepository
+from app.domain.models import PriceFeed, PriceFeedWithStatus, Security
+from app.domain.repositories import (
+    PriceFeedWithStatusRepository, SecurityRepository
+)
 from app.infrastructure.util.config import AppConfig
 
 
@@ -30,7 +32,6 @@ class PriceFeedWithStatusQueryHandler:
         return self.repo.get(data_date, feeds)
 
 
-@dataclass
 class PriceAuditReasonQueryHandler:
 
     def handle(self) -> List[str]:
@@ -44,4 +45,11 @@ class PriceAuditReasonQueryHandler:
             , {'reason': '#7 - Other'}
         ]
 
+
+@dataclass
+class ManualPricingSecurityQueryHandler:
+    repo: SecurityRepository
+
+    def handle(self) -> List[Security]:
+        return self.repo.get()
 

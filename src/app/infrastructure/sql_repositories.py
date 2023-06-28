@@ -5,7 +5,8 @@ import logging
 from typing import List, Optional, Tuple, Union
 
 # pypi
-from sqlalchemy import exc
+import pandas as pd
+from sqlalchemy import exc, update
 
 # native
 from app.domain.models import (
@@ -20,10 +21,16 @@ from app.domain.repositories import (
 from app.infrastructure.sql_models import (
     MGMTDBPriceFeed, MGMTDBPriceFeedWithStatus
 )
-
-
-from app.infrastructure.sql_tables import MonitorTable
+from app.infrastructure.sql_tables import (
+    CoreDBManualPricingSecurityTable
+)
+from app.infrastructure.util.config import AppConfig
 from app.infrastructure.util.date import get_current_bday, get_previous_bday
+from app.infrastructure.util.dataframe import add_is_deleted, add_modified
+
+
+class UnexpectedRowCountException(Exception):
+    pass
 
 
 class CoreDBSecurityRepository(SecurityRepository):
@@ -32,6 +39,57 @@ class CoreDBSecurityRepository(SecurityRepository):
 
     def get(self, lw_id: str) -> List[Security]:
         pass
+
+
+class CoreDBManualPricingSecurityRepository(SecurityRepository):
+    def create(self, security: Union[Security, List[Security]]) -> int:
+        # If a single sec is provided, turn into a list
+        if isinstance(security, Security):
+            secs = [security]
+        else:
+            secs = security
+        # exclude any secs which are already in the repo, to avoid creating them as dupes
+        secs = [s for s in secs if s not in self.get()]
+        data = [{'lw_id': s.lw_id} for s in secs]
+        # Convert to df and supplement with standard cols:
+        df = pd.DataFrame(data)
+        df = add_is_deleted(df)
+        df = add_modified(df)
+        logging.info(f"About to insert {df}")
+        res = CoreDBManualPricingSecurityTable().bulk_insert(df)  # TODO: error handling?
+        if isinstance(res, int):
+            row_cnt = res
+        else:
+            row_cnt = res.rowcount
+        if row_cnt != len(secs):
+            raise UnexpectedRowCountException(f"Expected {len(secs)} rows to be saved, but there were {row_cnt}!")
+        return row_cnt
+
+    def get(self, exclude_deleted=True) -> List[Security]:
+        query_result = CoreDBManualPricingSecurityTable().read(exclude_deleted)
+        # query result should be a DataFrame. Need to convert to list of Securities:
+        secs = [Security(lw_id) for lw_id in query_result['lw_id'].to_list()]
+        return secs
+
+    def delete(self, security: Union[Security, List[Security]]) -> int:
+        # If a single sec is provided, turn into a list
+        if isinstance(security, Security):
+            secs = [security]
+        else:
+            secs = security
+        # exclude any secs which are not currently in the repo, since we don't need to delete them:
+        secs = [s for s in secs if s in self.get()]
+        lw_ids = [s.lw_id for s in secs]
+        mps_table = CoreDBManualPricingSecurityTable()
+        new_vals = {'is_deleted': True}
+        new_vals = add_modified(new_vals)
+        stmt = update(mps_table.table_def).values(new_vals)
+        # Update only for the provided lw_id's, and not already deleted:
+        stmt = stmt.where(mps_table.c.is_deleted == False)
+        stmt = stmt.filter(mps_table.c.lw_id.in_(lw_ids))
+        row_cnt = mps_table._database.execute_write(stmt
+            , commit=AppConfig().parser.get('app', 'commit', fallback=False)).rowcount
+        return row_cnt
 
 
 class CoreDBPriceRepository(PriceRepository):

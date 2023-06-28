@@ -10,12 +10,33 @@ class DefaultRESTFormatter:
             'status': 'success',
         }, 200
     
-    def success_post(self, data: Union[dict, list], message: Optional[str]=None) -> Tuple[dict, int]:
-        return {
-            'data': data,
-            'message': message,
-            'status': 'success',
-        }, 201
+    def success_post(self, row_cnt: int) -> Tuple[dict, int]:
+        if row_cnt:
+            return {
+                'data': None,
+                'message': f"Successfully saved {row_cnt} row{'' if row_cnt == 1 else 's'}.",
+                'status': 'success',
+            }, 201
+        else:
+            return {
+                'data': None,
+                'message': f"Succeeded, but nothing was saved.",
+                'status': 'warning',
+            }, 200
+
+    def success_delete(self, row_cnt: int) -> Tuple[dict, int]:
+        if row_cnt:
+            return {
+                'data': None,
+                'message': f"Successfully deleted {row_cnt} row{'' if row_cnt == 1 else 's'}.",
+                'status': 'success',
+            }, 201
+        else:
+            return {
+                'data': None,
+                'message': f"Succeeded, but found nothing to delete.",
+                'status': 'warning',
+            }, 200
 
     def exception(self, e: Exception, http_return_code: int=500) -> Tuple[dict, int]:
         return {
