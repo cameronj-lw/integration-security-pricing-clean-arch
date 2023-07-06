@@ -15,36 +15,30 @@ from application.event_handlers import (
 from domain.events import (
     PriceBatchCreatedEvent, AppraisalBatchCreatedEvent, SecurityCreatedEvent
 )
-from infrastructure.event_handlers import KafkaDomainEventHandler
-from infrastructure.repositories import CoreDBPriceRepository
+from infrastructure.event_handlers import KafkaEventHandler
+from infrastructure.sql_repositories import CoreDBPriceRepository
+from infrastructure.util.config import AppConfig
 
 
 def main():
     parser = argparse.ArgumentParser(description='Kafka Consumer')
-    parser.add_argument('--bootstrap-servers', type=str, required=True, help='Kafka bootstrap servers')
     parser.add_argument('--data_type', '-dt', type=str, required=True, choices=['price-batch', 'appraisal-batch', 'security'], help='Type of data to consume')
-    parser.add_argument('--config_file', '-cf', type=str, required=True, help='File containing config for the kafka consumer')
-    parser.add_argument('--topics_file', '-tf', type=str, required=True, help='File containing topics for the relevant data type(s)')
     parser.add_argument('--reset_offset', '-ro', type=bool, default=False, help='Reset consumer offset to beginning')
     args = parser.parse_args()
     if args.data_type == 'price-batch':
-        kafka_consumer = KafkaDomainEventHandler(
-            # TODO: cmd line args / config files for below, including what to consume
-            config_file=args.config_file, reset_offset=args.reset_offset
-            , topics=["jdbc.lwdb.coredb.pricing.vw_price_batch"]
-            , event_class = PriceBatchCreatedEvent
+        kafka_consumer = KafkaEventHandler(
+            event_class = PriceBatchCreatedEvent
         )
-        event_handler = PriceBatchCreatedEventHandler(price_repository=CoreDBPriceRepository())
+        event_handler = PriceBatchCreatedEventHandler(price_repository=CoreDBPriceRepository(),
+            security_with_prices_repository=None, securities_with_prices_repository=None
+        )
     elif args.data_type == 'appraisal-batch':
-        kafka_consumer = KafkaDomainEventHandler(
-            # TODO: cmd line args / config files for below, including what to consume
-            config_file=args.config_file, reset_offset=args.reset_offset
-            , topics=["jdbc.lwdb.coredb.pricing.vw_appraisal_batch"]
-            , event_class = AppraisalBatchCreatedEvent
+        kafka_consumer = KafkaEventHandler(
+            event_class = AppraisalBatchCreatedEvent
         )
         event_handler = AppraisalBatchCreatedEventHandler()
     elif args.data_type == 'security':
-        kafka_consumer = KafkaDomainEventHandler(
+        kafka_consumer = KafkaEventHandler(
             # TODO: cmd line args / config files for below, including what to consume
             config_file=args.config_file, reset_offset=args.reset_offset
             , topics=["jdbc.lwdb.coredb.pricing.vw_security"]

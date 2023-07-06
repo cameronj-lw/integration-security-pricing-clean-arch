@@ -155,7 +155,7 @@ def get_current_bday(ref_date):
     :param ref_date: Reference date
     :return: Closest biz date
     """
-    calendar = CalendarTable().read_for_date(ref_date)
+    calendar = LWDBCalendarTable().read_for_date(ref_date)
     curr_bday = calendar['curr_bday']
     return curr_bday[0].date()
 
@@ -167,7 +167,7 @@ def get_previous_bday(ref_date):
     :param ref_date: Reference date
     :return: Previous biz date
     """
-    calendar = CalendarTable().read_for_date(ref_date)
+    calendar = LWDBCalendarTable().read_for_date(ref_date)
     prev_bday = calendar['prev_bday']
     return prev_bday[0].date()
 
@@ -179,7 +179,7 @@ def get_next_bday(ref_date):
     :param ref_date: Reference date
     :return: Next biz date
     """
-    calendar = CalendarTable().read_for_date(ref_date)
+    calendar = LWDBCalendarTable().read_for_date(ref_date)
     prev_bday = calendar['next_bday']
     return prev_bday[0].date()
 

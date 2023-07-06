@@ -1,16 +1,16 @@
 
 # core python
 from abc import ABC, abstractmethod
-from typing import List
+from dataclasses import dataclass
+from typing import List, Type
 
 # native
-from app.domain.events import DomainEvent
-from app.domain.repositories import MessageBroker
+from app.domain.events import Event
+from app.domain.message_brokers import MessageBroker
 
 
-class DomainEventPublisher(ABC):
-
-    @abstractmethod
-    def publish(self, *args, **kwargs):
-        pass
+@dataclass
+class EventPublisher(ABC):
+    message_broker: Type[MessageBroker]
+    event_class: Type[Event]
 

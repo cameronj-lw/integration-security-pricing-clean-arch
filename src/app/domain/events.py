@@ -11,56 +11,56 @@ from app.domain.models import (
 )
 
 
-class DomainEvent(ABC):
+class Event(ABC):
     pass
 
 
 @dataclass
-class PriceCreatedEvent(DomainEvent):
+class PriceCreatedEvent(Event):
     price: Price
 
 
 @dataclass
-class PriceBatchCreatedEvent(DomainEvent):
+class PriceBatchCreatedEvent(Event):
     price_batch: PriceBatch
 
 
 @dataclass
-class AppraisalBatchCreatedEvent(DomainEvent):
+class AppraisalBatchCreatedEvent(Event):
     appraisal_batch: AppraisalBatch
 
 
 @dataclass
-class SecurityCreatedEvent(DomainEvent):
+class SecurityCreatedEvent(Event):
     security: Security
 
 
 @dataclass
-class PriceAuditEntryCreatedEvent(DomainEvent):
+class PriceAuditEntryCreatedEvent(Event):
     entry: PriceAuditEntry
 
 
 @dataclass
-class SecurityWithPricesCreatedEvent(DomainEvent):
+class SecurityWithPricesCreatedEvent(Event):
     security_with_prices: SecurityWithPrices
 
 
 @dataclass
-class PriceFeedCreatedEvent(DomainEvent):  # TODO: maybe don't need this?
+class PriceFeedCreatedEvent(Event):  # TODO: maybe don't need this?
     price_feed: PriceFeed
 
 
 @dataclass
-class PriceFeedWithStatusCreatedEvent(DomainEvent):
+class PriceFeedWithStatusCreatedEvent(Event):
     price_feed_with_status: PriceFeedWithStatus
 
 
 @dataclass
-class PriceSourceCreatedEvent(DomainEvent):  # TODO: maybe don't need this?
+class PriceSourceCreatedEvent(Event):  # TODO: maybe don't need this?
     price_source: PriceSource
 
 
 @dataclass
-class PriceTypeCreatedEvent(DomainEvent):  # TODO: maybe don't need this?
+class PriceTypeCreatedEvent(Event):  # TODO: maybe don't need this?
     price_type: PriceType
     

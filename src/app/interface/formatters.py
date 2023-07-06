@@ -1,5 +1,6 @@
 
 # core python
+import logging
 from typing import List, Optional, Union, Tuple
 
 class DefaultRESTFormatter:
@@ -39,6 +40,7 @@ class DefaultRESTFormatter:
             }, 200
 
     def exception(self, e: Exception, http_return_code: int=500) -> Tuple[dict, int]:
+        logging.exception(e)
         return {
             'data': None,
             'message': f'{type(e).__name__}: {e}',

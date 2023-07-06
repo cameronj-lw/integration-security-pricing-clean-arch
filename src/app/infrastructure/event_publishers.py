@@ -3,26 +3,28 @@
 from dataclasses import dataclass
 import json
 import logging
-from typing import List, Tuple, Type
+from typing import List, Optional, Tuple, Type, Union
 
 # PyPi
 from configparser import ConfigParser
 from confluent_kafka import Producer
 
 # native
-from app.domain.events import DomainEvent
-from app.domain.event_publishers import DomainEventPublisher
+from app.domain.events import Event
+from app.domain.event_publishers import EventPublisher
 from app.infrastructure.util.config import AppConfig
 
 
-class KafkaDomainEventPublisher(DomainEventPublisher):
+@dataclass
+class KafkaEventProducer(EventPublisher):
+    topics: List[str]
 
     def __post_init__(self):
-        self.config = dict(AppConfig().parser['default'])
-        self.config.update(AppConfig().parser['producer'])
+        self.config = dict(AppConfig().parser['kafka_broker'])
+        self.config.update(AppConfig().parser['kafka_producer'])
         self.producer = Producer(self.config)
     
-    def serialize(self, event: DomainEvent) -> Tuple[str|None, bytes]:  
+    def serialize(self, event: Type[self.event_class]) -> Tuple[Optional[str], bytes]:  
         # TODO: does the message always have to be bytes?
         # TODO: should we even allow return value of (key, value)?
         """ Default serialization for kafka. Subclasses may override to meet specific needs."""
@@ -42,9 +44,10 @@ class KafkaDomainEventPublisher(DomainEventPublisher):
             logging.info("Produced event to topic {topic}: key = {key:12} value = {value:12}".format(
                 topic=msg.topic(), key=msg.key().decode('utf-8'), value=msg.value().decode('utf-8')))
 
-    def publish(self, event: DomainEvent, topic: str, flush=True):
+    def publish(self, event: Event, topic: str, flush=True):
         key, value = self.serialize(event)
-        self.producer.produce(topic, key=key, value=value, on_delivery=self.callback)
-        if flush:
-            self.producer.flush()
+        for topic in self.topics:
+            self.producer.produce(topic, key=key, value=value, on_delivery=self.callback)
+            if flush:
+                self.producer.flush()
 

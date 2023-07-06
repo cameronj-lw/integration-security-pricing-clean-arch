@@ -10,6 +10,7 @@ from app.infrastructure.util.table import BaseTable, ScenarioTable
 """
 COREDB
 """
+
 class CoreDBManualPricingSecurityTable(BaseTable):
 	config_section = 'coredb'
 	schema = 'pricing'
@@ -27,6 +28,31 @@ class CoreDBManualPricingSecurityTable(BaseTable):
 			stmt = sql.select(self.table_def)
 		else:
 			stmt = sql.select([self.table_def])
+		if exclude_deleted:
+			stmt = stmt.where(self.c.is_deleted == False)
+		return self.execute_read(stmt)
+
+
+class CoreDBColumnConfigTable(BaseTable):
+	config_section = 'coredb'
+	schema = 'pricing'
+	table_name = 'column_config'
+
+	def read(self, user_id=None, exclude_deleted=True):
+		"""
+		Read all entries, optionally for a user_id, excluding those with "is_deleted" by default
+
+		:param user_id: user_id to query for
+		:param exclude_deleted: Whether to exclude those with "is_deleted"
+		:return: DataFrame
+		"""		
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		if user_id is not None:
+			stmt = stmt.where(self.c.user_id == user_id)
 		if exclude_deleted:
 			stmt = stmt.where(self.c.is_deleted == False)
 		return self.execute_read(stmt)

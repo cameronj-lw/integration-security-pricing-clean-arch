@@ -1,11 +1,20 @@
 """
 File related utils
 """
+
+# core python
+import datetime
 import hashlib
+import json
+import logging
 import os
 import re
 import sys
+from typing import Union
 import win32net  # TODO_UBUNTU
+
+# native
+from app.infrastructure.util.config import AppConfig
 
 def rotate_file(folder_name, file_name):
     """
@@ -111,3 +120,63 @@ def get_unc_path(file_path):
 
     else:
         raise RuntimeError('Unrecognized file_path: %s' % file_path)
+
+def get_read_model_content(read_model_name: str, file_name: str, data_date: Union[datetime.date, None]=None):
+    """
+    Retrieve the read model contents.
+
+    Args:
+    - read_model_name (str): Name of the read model.
+    - file_name (str): Name of the json file.
+    - data_date (optional: date): Date to retrieve read model for.
+
+    Returns:
+    - likely dict or list: The JSON content. Or None, if the file DNE.
+    """
+    read_model_file = get_read_model_file(read_model_name, file_name, data_date)
+    if not os.path.isfile(read_model_file):
+        return None
+    with open(read_model_file, 'r') as f:
+        content = json.loads(f.read())
+    return content
+
+def get_read_model_folder(read_model_name: str, data_date: Union[datetime.date, None]=None) -> str:
+    """
+    Retrieve the path to the folder containing JSON files for a given date.
+
+    Args:
+    - read_model_name (str): Name of the read model.
+    - data_date (date): Date to retrieve read model for.
+
+    Returns:
+    - str: The path to the folder containing JSON files for the given date.
+    """
+    data_dir = AppConfig().parser.get('files', 'data_dir')
+    base_dir = os.path.join(data_dir, 'lw', 'read_model', read_model_name)
+    if data_date is None:
+        full_path = base_dir
+        if not os.path.exists(full_path):
+            base_dir_with_blank_file = os.path.join(full_path, '')
+            logging.debug(f'Preparing file path {base_dir_with_blank_file}...')
+            full_path = prepare_file_path(base_dir_with_blank_file, rotate=False)
+        return full_path
+    full_path = prepare_dated_file_path(folder_name=base_dir, date=data_date, file_name='', rotate=False)
+    return full_path
+
+def get_read_model_file(read_model_name, file_name, data_date: Union[datetime.date, None]=None):
+    """
+    Retrieve the read model file path.
+
+    Args:
+    - read_model_name (str): Name of the read model.
+    - file_name (str): Name of the file, including suffix.
+    - data_date (optional: str in YYYYMMDD, or date or datetime): Date to retrieve read model for.
+
+    Returns:
+    - str: The full path including file name and extension of the read model file.
+        Note if the file DNE, this will still provide the full path.
+        This is for cases where the caller of this function wants to create the file.
+    """
+    read_model_folder = get_read_model_folder(read_model_name, data_date)
+    read_model_file = os.path.join(read_model_folder, file_name)
+    return read_model_file

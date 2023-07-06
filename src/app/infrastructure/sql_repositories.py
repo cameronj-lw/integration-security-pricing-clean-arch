@@ -9,6 +9,8 @@ import pandas as pd
 from sqlalchemy import exc, update
 
 # native
+from app.application.models import ColumnConfig, UserWithColumnConfig
+from app.application.repositories import UserWithColumnConfigRepository
 from app.domain.models import (
     Price, Security, PriceAuditEntry,
     PriceFeed, PriceFeedWithStatus, PriceSource, PriceType
@@ -22,7 +24,7 @@ from app.infrastructure.sql_models import (
     MGMTDBPriceFeed, MGMTDBPriceFeedWithStatus
 )
 from app.infrastructure.sql_tables import (
-    CoreDBManualPricingSecurityTable
+    CoreDBManualPricingSecurityTable, CoreDBColumnConfigTable
 )
 from app.infrastructure.util.config import AppConfig
 from app.infrastructure.util.date import get_current_bday, get_previous_bday
@@ -88,6 +90,44 @@ class CoreDBManualPricingSecurityRepository(SecurityRepository):
         stmt = stmt.where(mps_table.c.is_deleted == False)
         stmt = stmt.filter(mps_table.c.lw_id.in_(lw_ids))
         row_cnt = mps_table._database.execute_write(stmt
+            , commit=AppConfig().parser.get('app', 'commit', fallback=False)).rowcount
+        return row_cnt
+
+
+class CoreDBColumnConfigRepository(UserWithColumnConfigRepository):
+    def create(self, user_with_column_config: UserWithColumnConfig) -> int:
+        data = [{'user_id': user_with_column_config.user_id, 'column_name': u.column_name, 'is_hidden': u.is_hidden} 
+            for u in user_with_column_config.column_configs]
+        # Convert to df and supplement with standard cols:
+        df = pd.DataFrame(data)
+        df = add_is_deleted(df)
+        df = add_modified(df)
+        logging.info(f"About to insert {df}")
+        res = CoreDBColumnConfigTable().bulk_insert(df)  # TODO: error handling?
+        if isinstance(res, int):
+            row_cnt = res
+        else:
+            row_cnt = res.rowcount
+        if row_cnt != len(user_with_column_config.column_configs):
+            raise UnexpectedRowCountException(f"Expected {len(user_with_column_config.column_configs)} rows to be saved, but there were {row_cnt}!")
+        return row_cnt
+
+    def get(self, user_id: str, exclude_deleted=True) -> UserWithColumnConfig:
+        query_result = CoreDBColumnConfigTable().read(user_id)
+        # query result should be a DataFrame. Need to convert to list of ColumnConfigs and then create UserWithColumnConfig:
+        column_configs = [ColumnConfig(cc['column_name'], cc['is_hidden']) for cc in query_result.to_dict('records')]
+        user_with_column_config = UserWithColumnConfig(user_id, column_configs)
+        return user_with_column_config
+
+    def delete(self, user_id: str) -> int:
+        cc_table = CoreDBColumnConfigTable()
+        new_vals = {'is_deleted': True}
+        new_vals = add_modified(new_vals)
+        stmt = update(cc_table.table_def).values(new_vals)
+        # Update only for the provided user_id, and not already deleted:
+        stmt = stmt.where(cc_table.c.user_id == user_id)
+        stmt = stmt.where(cc_table.c.is_deleted == False)
+        row_cnt = cc_table._database.execute_write(stmt
             , commit=AppConfig().parser.get('app', 'commit', fallback=False)).rowcount
         return row_cnt
 

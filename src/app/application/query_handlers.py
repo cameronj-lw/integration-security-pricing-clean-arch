@@ -3,9 +3,12 @@
 from configparser import ConfigParser
 from dataclasses import dataclass
 import datetime
+import logging
 from typing import List, Optional
 
 # native
+from app.application.models import UserWithColumnConfig, DateWithPricingAttachments
+from app.application.repositories import UserWithColumnConfigRepository, DateWithPricingAttachmentsRepository
 from app.domain.models import PriceFeed, PriceFeedWithStatus, Security
 from app.domain.repositories import (
     PriceFeedWithStatusRepository, SecurityRepository
@@ -52,4 +55,25 @@ class ManualPricingSecurityQueryHandler:
 
     def handle(self) -> List[Security]:
         return self.repo.get()
+
+
+@dataclass
+class UserWithColumnConfigQueryHandler:
+    repo: UserWithColumnConfigRepository
+
+    def handle(self, user_id: str) -> UserWithColumnConfig:
+        return self.repo.get(user_id)
+
+
+@dataclass
+class PricingAttachmentByDateQueryHandler:
+    repo: DateWithPricingAttachmentsRepository
+
+    def handle(self, data_date: str) -> DateWithPricingAttachments:
+        try:
+            date = datetime.datetime.strptime(data_date, '%Y%m%d').date()
+        except Exception as e:
+            # TODO: application error handling for invalid date?
+            pass  # exception should be caught by interface layer
+        return self.repo.get(date)
 

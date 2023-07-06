@@ -25,20 +25,39 @@ CORS(blueprint)
 class PricingNotificationSubscription(Resource):
     def post(self):
         payload = api.payload
-        return  # TODO: implement
+        return  # TODO_WAVE3: implement
     
     def get(self):
-        return  # TODO: implement
+        return  # TODO_WAVE3: implement
 
     def delete(self):
         payload = api.payload
-        return  # TODO: implement
-
+        return  # TODO_WAVE3: implement
 
 @api.route('/api/pricing/feed-status')
 class PricingFeedStatus(Resource):
+    formatter = DefaultRESTFormatter()
+
     def get(self):
-        return  # TODO: implement
+        try:
+            data_date = datetime.date.today()
+            # Get query handler, based on app config
+            query_handler = current_app.config['feed_status_query_handler']
+            # Get feeds' statuses
+            feeds_with_statuses = query_handler.handle(data_date)  # query_handler.repo.get(data_date, feeds)
+            # Format into dict (desired format for result)
+            result_data = {
+                fws.feed.name: {
+                    'status': fws.status,
+                    'asofdate': fws.status_ts.isoformat(),
+                    'normal_eta': fws.feed.get_normal_eta(fws.data_date).isoformat(),
+                    'security_type': fws.feed.security_type,
+                } for fws in feeds_with_statuses
+            }
+            # Return standard format
+            return self.formatter.success_get(result_data)
+        except Exception as e:
+            return self.formatter.exception(e)        
             
 @api.route('/api/pricing/feed-status/<string:price_date>')
 class PricingFeedStatusByDate(Resource):
@@ -52,7 +71,7 @@ class PricingFeedStatusByDate(Resource):
             # Get feeds' statuses
             feeds_with_statuses = query_handler.handle(data_date)  # query_handler.repo.get(data_date, feeds)
             # Format into dict (desired format for result)
-            result_dict = {
+            result_data = {
                 fws.feed.name: {
                     'status': fws.status,
                     'asofdate': fws.status_ts.isoformat(),
@@ -61,14 +80,14 @@ class PricingFeedStatusByDate(Resource):
                 } for fws in feeds_with_statuses
             }
             # Return standard format
-            return self.formatter.success_get(result_dict)
+            return self.formatter.success_get(result_data)
         except Exception as e:
             return self.formatter.exception(e)
 
 @api.route('/api/transaction/<string:trade_date>')
 class TransactionByDate(Resource):
     def get(self, trade_date):
-        return  # TODO: implement
+        return  # TODO_WAVE3: implement
 
 @api.route('/api/pricing/audit-reason')
 class PricingAuditReason(Resource):
@@ -84,15 +103,29 @@ class PricingAuditReason(Resource):
 
 @api.route('/api/pricing/attachment/<string:price_date>')
 class PricingAttachmentByDate(Resource):
+    formatter = DefaultRESTFormatter()
+    
     def post(self, price_date):
         payload = api.payload
-        return  # TODO: implement
+        try:
+            command_handler = current_app.config['pricing_attachment_by_date_command_handler']
+            row_cnt = command_handler.handle_post(price_date, payload)
+            return self.formatter.success_post(row_cnt)
+        except Exception as e:
+            return self.formatter.exception(e)
     
     def get(self, price_date):
-        return  # TODO: implement
-
-    def delete(self, price_date):
-        return  # TODO: implement
+        try:
+            # Get query handler, based on app config
+            query_handler = current_app.config['pricing_attachment_by_date_query_handler']
+            # Get feeds' statuses
+            date_with_attachments = query_handler.handle(price_date)
+            # Need to format into list (desired format for result):
+            result_data = [{'full_path': f.full_path} for f in date_with_attachments.attachments]
+            # Return standard format
+            return self.formatter.success_get(result_data)
+        except Exception as e:
+            return self.formatter.exception(e)
 
 @api.route('/api/pricing/held-security-price')
 class HeldSecurityWithPrices(Resource):
@@ -101,11 +134,6 @@ class HeldSecurityWithPrices(Resource):
         # because we want to accept optional params in the payload rather than the URL, and 
         # some clients such as AngularJS cannot do so for a GET request.
         payload = api.payload
-        return  # TODO: implement
-
-@api.route('/api/pricing/price/<string:price_date>')
-class PriceByDate(Resource):
-    def get(self, price_date):
         return  # TODO: implement
 
 @api.route('/api/pricing/price')
@@ -136,9 +164,9 @@ class ManualPricingSecurity(Resource):
             manual_pricing_securities = query_handler.handle()  # query_handler.repo.get(data_date, feeds)
             # manual_pricing_securities should be a list of Securities.
             # Need to format into list (desired format for result):
-            result_list = [{'lw_id': sec.lw_id} for sec in manual_pricing_securities]
+            result_data = [{'lw_id': sec.lw_id} for sec in manual_pricing_securities]
             # Return standard format
-            return self.formatter.success_get(result_list)
+            return self.formatter.success_get(result_data)
         except Exception as e:
             return self.formatter.exception(e)
 
@@ -161,7 +189,7 @@ class PricingAuditTrail(Resource):
         return  # TODO: implement
 
 @api.route('/api/pricing/audit-trail-v2/<string:price_date>')
-class PricingAuditTrail(Resource):
+class PricingAuditTrailv2(Resource):
     def post(self, price_date):
         payload = api.payload
         return  # TODO: implement
@@ -171,15 +199,39 @@ class PricingAuditTrail(Resource):
 
 @api.route('/api/pricing/column-config/<string:user_id>')
 class PricingColumnConfig(Resource):
+    formatter = DefaultRESTFormatter()
+
     def post(self, user_id):
         payload = api.payload
-        return  # TODO: implement
+        try:
+            command_handler = current_app.config['column_config_command_handler']
+            row_cnt = command_handler.handle_post(user_id, payload)
+            return self.formatter.success_post(row_cnt)
+        except Exception as e:
+            return self.formatter.exception(e)
 
     def get(self, user_id):
-        return  # TODO: implement
+        try:
+            # Get query handler, based on app config
+            query_handler = current_app.config['column_config_query_handler']
+            # Get feeds' statuses
+            user_with_column_config = query_handler.handle(user_id)  # query_handler.repo.get(data_date, feeds)
+            # manual_pricing_securities should be a list of Securities.
+            # Need to format into list (desired format for result):
+            result_data = [{'user_id': user_id, 'column_name': cc.column_name, 'is_hidden': cc.is_hidden} for cc in user_with_column_config.column_configs]
+            # Return standard format
+            return self.formatter.success_get(result_data)
+        except Exception as e:
+            return self.formatter.exception(e)
 
     def delete(self, user_id):
-        return  # TODO: implement
+        payload = api.payload
+        try:
+            command_handler = current_app.config['column_config_command_handler']
+            row_cnt = command_handler.handle_delete(user_id, payload)
+            return self.formatter.success_post(row_cnt)
+        except Exception as e:
+            return self.formatter.exception(e)
     
 @api.route('/api/pricing/count-by-source')
 class PriceCountBySource(Resource):  # TODO_WAVE4: implement

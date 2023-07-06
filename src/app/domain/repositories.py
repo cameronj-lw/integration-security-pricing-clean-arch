@@ -134,18 +134,5 @@ class PriceTypeRepository(ABC):
         pass
 
 
-class MessageBroker(ABC):  # TODO: maybe don't need this class? 
-    @abstractmethod
-    def publish(self, topic: str, message: bytes):  # TODO: does message always need to be bytes?
-        pass
-
-    @abstractmethod
-    def subscribe(self, topic: str, callback):
-        pass
-
-    @abstractmethod
-    def unsubscribe(self, topic: str):
-        pass
-
 
 

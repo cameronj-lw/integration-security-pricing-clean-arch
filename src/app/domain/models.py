@@ -1,6 +1,6 @@
 
 # core python
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import datetime
 from typing import List, Type
 
@@ -37,6 +37,12 @@ class PriceType:
 @dataclass 
 class Security:
     lw_id: str
+    attributes: dict = field(default_factory=dict)  # TODO: should this class require specific attributes?
+
+    def to_dict(self):
+        res = {'lw_id': self.lw_id}
+        res.update(self.attributes)
+        return res
 
 
 @dataclass
@@ -44,8 +50,31 @@ class Price:
     security: Security
     source: PriceSource
     data_date: datetime.date
+    modified_at: datetime.datetime
     type_: PriceType
     value: float
+
+    def to_dict(self):
+        res = {'lw_id': self.security.lw_id
+            , 'data_date': self.data_date.isoformat()
+            , 'source': self.source.name
+            , 'modified_at': self.modified_at.isoformat()
+            , self.type_.name: self.value
+        }
+        return res
+
+
+@dataclass
+class SecurityWithPrices:
+    security: Security
+    data_date: datetime.date
+    prices: List[Price]
+
+    def to_dict(self):
+        res = self.security.to_dict()
+        res['data_date'] = self.data_date.isoformat()
+        res['prices'] = [px.to_dict() for px in self.prices]
+        return res
 
 
 @dataclass
@@ -71,13 +100,6 @@ class Position:
     data_date: datetime.date
     security: Security
     prices: List[Price]  # TODO: only allow one price per price type?
-
-
-@dataclass
-class SecurityWithPrices(Security):
-    data_date: datetime.date
-    security: Security
-    prices: List[Price]
 
 
 @dataclass

@@ -4,13 +4,13 @@ from abc import ABC, abstractmethod
 from typing import List
 
 # native
-from app.domain.events import DomainEvent
+from app.domain.events import Event
 
 
-class DomainEventHandler(ABC):
-    """ Enforces that all event handlers must handle a DomainEvent """
+class EventHandler(ABC):
+    
     @abstractmethod
-    def handle(self, event: DomainEvent):
-        pass
+    def handle(self, event: Event):
+        """ Event handlers must handle a Event """
 
 
