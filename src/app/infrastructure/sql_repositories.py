@@ -12,19 +12,22 @@ from sqlalchemy import exc, update
 from app.application.models import ColumnConfig, UserWithColumnConfig
 from app.application.repositories import UserWithColumnConfigRepository
 from app.domain.models import (
-    Price, Security, PriceAuditEntry,
-    PriceFeed, PriceFeedWithStatus, PriceSource, PriceType
+    Price, Security, PriceAuditEntry
+    , PriceFeed, PriceFeedWithStatus, PriceSource, PriceType
+    , Position
 )
 from app.domain.repositories import (
     SecurityRepository, PriceRepository
     , PriceFeedRepository, PriceFeedWithStatusRepository
     , PriceAuditEntryRepository, PriceSourceRepository, PriceTypeRepository
+    , PositionRepository
 )
 from app.infrastructure.sql_models import (
     MGMTDBPriceFeed, MGMTDBPriceFeedWithStatus
 )
 from app.infrastructure.sql_tables import (
     CoreDBManualPricingSecurityTable, CoreDBColumnConfigTable
+    , LWDBAPXAppraisalTable
 )
 from app.infrastructure.util.config import AppConfig
 from app.infrastructure.util.date import get_current_bday, get_previous_bday
@@ -139,6 +142,26 @@ class CoreDBPriceRepository(PriceRepository):
     def get(self, data_date: Optional[datetime.date], source: Optional[PriceSource]
             , type_: Optional[PriceType], security: Optional[Security]) -> List[Price]:
         pass
+
+
+class LWDBAPXAppraisalPositionRepository(PositionRepository):
+    def create(self, position: Position) -> Position:
+        pass  # Not needed to implement here, we think...
+
+    def get(self, data_date: datetime.date) -> List[Position]:  # TODO: support portfolio and/or security?
+        query_result = LWDBAPXAppraisalTable().read_for_date(data_date)
+        positions = [Position(pos['Portfolios'], data_date, Security(pos['ProprietarySymbol'])
+                , []  # TODO: actually add prices here?
+            ) for pos in query_result.to_dict('records')]
+        return positions
+
+    # TODO_CLEANUP: remove when not needed
+    def get_unique_securities(self, data_date: datetime.date) -> List[Security]:
+        positions = self.get(data_date)
+        lw_ids = [pos.security.lw_id for pos in positions]
+        unique_lw_ids = set(lw_ids)
+        unique_secs = [Security(lw_id) for lw_id in unique_lw_ids]
+        return unique_secs
 
 
 class MGMTDBPriceFeedRepository(PriceFeedRepository):  # TODO: is this needed?

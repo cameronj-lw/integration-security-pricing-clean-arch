@@ -21,16 +21,19 @@ class PriceFeedWithStatusQueryHandler:
     repo: PriceFeedWithStatusRepository
 
     def get_relevant_pricing_feeds(self):
+        """ Get list of pricing feeds which are relevant """
         unparsed = AppConfig().get("app", "relevant_pricing_feeds")
         parsed = [feed.strip() for feed in unparsed.split(',')]
         return [self.repo.price_feed_class(f) for f in parsed]
 
     def handle(self, data_date: datetime.date, feed: Optional[PriceFeed]=None) -> List[PriceFeedWithStatus]:
+        """ Handle the query """
         # If feed is not provided, defer to config for relevant feeds:
         if feed is None:
             feeds = self.get_relevant_pricing_feeds()
         else:
             feeds = [feed]
+            
         # Retrieve the price feeds with statuses from the repository
         return self.repo.get(data_date, feeds)
 
@@ -38,6 +41,7 @@ class PriceFeedWithStatusQueryHandler:
 class PriceAuditReasonQueryHandler:
 
     def handle(self) -> List[str]:
+        """ Handle the query """
         return [
             {'reason': '#1 - Index does not price this bond'}
             , {'reason': '#2 - Index provided the bond price late by email'}
@@ -54,6 +58,7 @@ class ManualPricingSecurityQueryHandler:
     repo: SecurityRepository
 
     def handle(self) -> List[Security]:
+        """ Handle the query """
         return self.repo.get()
 
 
@@ -62,6 +67,7 @@ class UserWithColumnConfigQueryHandler:
     repo: UserWithColumnConfigRepository
 
     def handle(self, user_id: str) -> UserWithColumnConfig:
+        """ Handle the query """
         return self.repo.get(user_id)
 
 
@@ -70,6 +76,7 @@ class PricingAttachmentByDateQueryHandler:
     repo: DateWithPricingAttachmentsRepository
 
     def handle(self, data_date: str) -> DateWithPricingAttachments:
+        """ Handle the query """
         try:
             date = datetime.datetime.strptime(data_date, '%Y%m%d').date()
         except Exception as e:

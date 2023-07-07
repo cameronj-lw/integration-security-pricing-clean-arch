@@ -66,7 +66,7 @@ class SecuritiesWithPricesRepository(ABC):
         pass
 
     @abstractmethod
-    def refresh(self, data_date: datetime.date, securities: List[Security]):
+    def refresh_for_securities(self, data_date: datetime.date, securities: List[Security]):
         pass
 
     @abstractmethod

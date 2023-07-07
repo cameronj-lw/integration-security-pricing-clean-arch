@@ -14,11 +14,13 @@ def generate_eom_dates(start_date, end_date=None, include_end_date=True):
     default to last business day if not set. Optionally also include end_date, making
     sure not to include it twice.
 
-    :param start_date: The start date or datetime
-    :param end_date: Optional end date or datetime. Will default to last business day if not set
-    :param include_end_date: Flag to indicate we should include the end date in the series
+    Args:
+    - start_date (datetime.date): The start date or datetime
+    - end_date (datetime.date): Optional end date or datetime. Will default to last business day if not set
+    - include_end_date (bool): Flag to indicate we should include the end date in the series
                              regardless of whether it's an end of month date
-    :return: Series of datetimes
+    
+    Returns: Pandas Series of datetimes
     """
     import pandas as pd
     if end_date is None:
@@ -41,8 +43,11 @@ def get_nearest_month_end(ref_date):
     """
     Get the closest past month end date to reference date
 
-    :param ref_date: Reference date
-    :return: Closest ME date
+    Args:
+    - ref_date (datetime.date): Reference date
+
+    Returns: 
+    - datetime.date: Closest ME date
     """
     # Create a list of all possible nearest MEs for the ref date.
     me_dates = [

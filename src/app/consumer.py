@@ -15,8 +15,14 @@ from application.event_handlers import (
 from domain.events import (
     PriceBatchCreatedEvent, AppraisalBatchCreatedEvent, SecurityCreatedEvent
 )
-from infrastructure.event_handlers import KafkaEventHandler
-from infrastructure.sql_repositories import CoreDBPriceRepository
+# from infrastructure.event_handlers import KafkaEventHandler  # TODO_CLEANUP: remove when not needed
+from infrastructure.event_subscribers import (KafkaCoreDBAppraisalBatchCreatedEventConsumer
+    , KafkaCoreDBSecurityCreatedEventConsumer
+)
+from infrastructure.file_repositories import (
+    JSONHeldSecuritiesRepository, JSONHeldSecuritiesWithPricesRepository, JSONSecurityWithPricesRepository
+)
+from infrastructure.sql_repositories import CoreDBPriceRepository, LWDBAPXAppraisalPositionRepository
 from infrastructure.util.config import AppConfig
 
 
@@ -25,33 +31,34 @@ def main():
     parser.add_argument('--data_type', '-dt', type=str, required=True, choices=['price-batch', 'appraisal-batch', 'security'], help='Type of data to consume')
     parser.add_argument('--reset_offset', '-ro', type=bool, default=False, help='Reset consumer offset to beginning')
     args = parser.parse_args()
-    if args.data_type == 'price-batch':
-        kafka_consumer = KafkaEventHandler(
-            event_class = PriceBatchCreatedEvent
+    if args.data_type == 'appraisal-batch':
+        kafka_consumer = KafkaCoreDBAppraisalBatchCreatedEventConsumer(
+            event_handler = AppraisalBatchCreatedEventHandler(
+                position_repository = LWDBAPXAppraisalPositionRepository()
+                , held_securities_repository = JSONHeldSecuritiesRepository()
+                , held_securities_with_prices_repository = JSONHeldSecuritiesWithPricesRepository()
+            )
         )
-        event_handler = PriceBatchCreatedEventHandler(price_repository=CoreDBPriceRepository(),
-            security_with_prices_repository=None, securities_with_prices_repository=None
-        )
-    elif args.data_type == 'appraisal-batch':
-        kafka_consumer = KafkaEventHandler(
-            event_class = AppraisalBatchCreatedEvent
-        )
-        event_handler = AppraisalBatchCreatedEventHandler()
+        kafka_consumer.consume()
+    # elif args.data_type == 'price-batch':
+    #     kafka_consumer = KafkaEventHandler(
+    #         event_class = PriceBatchCreatedEvent
+    #     )
+    #     event_handler = PriceBatchCreatedEventHandler(price_repository=CoreDBPriceRepository(),
+    #         security_with_prices_repository=None, securities_with_prices_repository=None
+    #     )
     elif args.data_type == 'security':
-        kafka_consumer = KafkaEventHandler(
-            # TODO: cmd line args / config files for below, including what to consume
-            config_file=args.config_file, reset_offset=args.reset_offset
-            , topics=["jdbc.lwdb.coredb.pricing.vw_security"]
-            , event_class = SecurityCreatedEvent
+        kafka_consumer = KafkaCoreDBSecurityCreatedEventConsumer(
+            event_handler = SecurityCreatedEventHandler(
+                security_with_prices_repository = JSONSecurityWithPricesRepository()
+                , held_securities_with_prices_repository = JSONHeldSecuritiesWithPricesRepository()
+            )
         )
-        event_handler = SecurityCreatedEventHandler()
+        kafka_consumer.consume()
     else:
         logging.error(f"Unconfigured data_type: {args.data_type}!")
         return 1
-    
-    while True:
-        event = kafka_consumer.get_single_event()
-        event_handler.handle_price_batch_created(event)
+
 
 
 if __name__ == '__main__':

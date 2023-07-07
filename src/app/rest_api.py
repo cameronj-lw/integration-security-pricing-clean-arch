@@ -15,10 +15,9 @@ from application.query_handlers import (
     PricingAttachmentByDateQueryHandler
 )
 from application.command_handlers import (
-    PriceFeedCommandHandler, SecurityCommandHandler, 
+    SecurityCommandHandler, 
     UserWithColumnConfigCommandHandler, PricingAttachmentByDateCommandHandler
 )
-from infrastructure.util.config import AppConfig
 from infrastructure.sql_repositories import (
     MGMTDBPriceFeedWithStatusRepository, CoreDBManualPricingSecurityRepository,
     CoreDBColumnConfigRepository
@@ -27,6 +26,7 @@ from infrastructure.file_repositories import (
     DataDirDateWithPricingAttachmentsRepository
 )
 from interface.routes import blueprint  # import routes
+from infrastructure.util.config import AppConfig
 
 
 
@@ -43,9 +43,6 @@ column_config_query_handler = UserWithColumnConfigQueryHandler(CoreDBColumnConfi
 price_audit_reason_query_handler = PriceAuditReasonQueryHandler()
 pricing_attachment_by_date_command_handler = PricingAttachmentByDateCommandHandler(DataDirDateWithPricingAttachmentsRepository())
 pricing_attachment_by_date_query_handler = PricingAttachmentByDateQueryHandler(DataDirDateWithPricingAttachmentsRepository())
-
-# Initialize services
-# price_feed_service = PriceFeedService()
 
 # Inject dependencies into the Flask app context
 app.config['feed_status_query_handler'] = price_feed_with_status_query_handler

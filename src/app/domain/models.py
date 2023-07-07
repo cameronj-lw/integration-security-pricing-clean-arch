@@ -40,9 +40,20 @@ class Security:
     attributes: dict = field(default_factory=dict)  # TODO: should this class require specific attributes?
 
     def to_dict(self):
+        """ Export an instance to dict format """
         res = {'lw_id': self.lw_id}
         res.update(self.attributes)
         return res
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        """ Create an instance from dict """
+        try:
+            lw_id = data['lw_id']
+            attributes = {key: value for key, value in data.items() if key != 'lw_id'}
+            return cls(lw_id, attributes)
+        except (KeyError, AttributeError):
+            return None  # If not all required attributes are provided, cannot create the instance        
 
 
 @dataclass
@@ -55,6 +66,7 @@ class Price:
     value: float
 
     def to_dict(self):
+        """ Export an instance to dict format """
         res = {'lw_id': self.security.lw_id
             , 'data_date': self.data_date.isoformat()
             , 'source': self.source.name
@@ -62,6 +74,20 @@ class Price:
             , self.type_.name: self.value
         }
         return res
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        """ Create an instance from dict """
+        try:
+            security = Security(data['lw_id'])
+            source = PriceSource[data['source']]
+            data_date = datetime.date.fromisoformat(data['data_date'])
+            modified_at = datetime.datetime.fromisoformat(data['modified_at'])
+            type_ = PriceType[data['type']]
+            value = data.get(type_.name, 0.0)
+            return cls(security, source, data_date, modified_at, type_, value)
+        except (KeyError, AttributeError):
+            return None  # If not all required attributes are provided, cannot create the instance
 
 
 @dataclass
@@ -71,10 +97,24 @@ class SecurityWithPrices:
     prices: List[Price]
 
     def to_dict(self):
+        """ Export an instance to dict format """
         res = self.security.to_dict()
         res['data_date'] = self.data_date.isoformat()
         res['prices'] = [px.to_dict() for px in self.prices]
         return res
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        """ Create an instance from dict """
+        try:
+            security = Security(data['lw_id'])
+            data_date = datetime.date.fromisoformat(data['data_date'])
+            prices = [Price.from_dict(px_data) for px_data in data['prices']]
+            if None in (security, data_date) or None in prices:
+                return None  # If not all required attributes are provided, cannot create the instance
+            return cls(security, data_date, prices)
+        except (KeyError, AttributeError):
+            return None  # If not all required attributes are provided, cannot create the instance
 
 
 @dataclass

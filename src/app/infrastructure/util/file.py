@@ -180,3 +180,22 @@ def get_read_model_file(read_model_name, file_name, data_date: Union[datetime.da
     read_model_folder = get_read_model_folder(read_model_name, data_date)
     read_model_file = os.path.join(read_model_folder, file_name)
     return read_model_file
+
+def set_read_model_content(read_model_name, file_name, content, data_date=None):
+    """
+    Set the read model contents.
+
+    Args:
+    - read_model_name (str): Name of the read model.
+    - file_name (str): Name of the file, excluding .json suffix.
+    - content (JSON serializable, such as dict or list): Content for the file.
+    - data_date (optional: str in YYYYMMDD, or date or datetime): Date to retrieve read model for.
+
+    Returns:
+    - None. (TODO: error handling / provide return code)
+    """
+    read_model_file = get_read_model_file(read_model_name, file_name, data_date)
+    json_content = json.dumps(content, indent=4, default=str)
+    with open(read_model_file, 'w') as f:
+        logging.debug(f'writing to {json_content}...')
+        f.write(json_content)

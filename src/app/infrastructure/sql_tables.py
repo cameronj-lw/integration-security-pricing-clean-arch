@@ -61,6 +61,7 @@ class CoreDBColumnConfigTable(BaseTable):
 """
 LWDB
 """
+
 class LWDBCalendarTable(ScenarioTable):
 	config_section = 'lwdb'
 	table_name = 'calendar'
@@ -85,9 +86,34 @@ class LWDBCalendarTable(ScenarioTable):
 		return data
 
 
+class LWDBAPXAppraisalTable(ScenarioTable):
+	config_section = 'lwdb'
+	table_name = 'apx_appraisal'
+
+	def read_for_date(self, data_date):
+		"""
+		Read all entries for a specific date and with the latest scenario
+
+		:param data_date: The data date
+		:return: DataFrame
+		"""
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		stmt = (
+			stmt
+			.where(self.c.scenario == self.base_scenario)
+			.where(self.c.data_dt == data_date)
+		)
+		data = self.execute_read(stmt)
+		return data
+
+
 """
 MGMTDB
 """
+
 class MGMTDBMonitorTable(ScenarioTable):
 	config_section = 'mgmtdb'
 	table_name = 'monitor'
