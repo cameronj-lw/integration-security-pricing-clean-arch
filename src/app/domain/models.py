@@ -2,6 +2,7 @@
 # core python
 from dataclasses import dataclass, field
 import datetime
+import logging
 from typing import List, Type
 
 
@@ -19,14 +20,23 @@ class PriceSource:
     #     ,'RBC'
     # ]
 
-    # def __gt__(self, other):
-    #     if self.name not in cls.HIERARCHY:
-    #         return False
-    #     try:
-    #         return (cls.HIERARCHY.index(self.name) < cls.HIERARCHY.index(other.name))
-    #     except ValueError as e:
-    #         # TODO: specific exception to support logging? Note logging should not happen in domain layer
-    #         return True
+    def __gt__(self, other):
+        logging.error(f'Inside __gt__! {self} {other}')
+        HIERARCHY = [
+            'OVERRIDE'
+            ,'MANUAL'
+            ,'FUNDRUN'
+            ,'FTSE'
+            ,'MARKIT'
+            ,'BLOOMBERG'
+            ,'RBC'
+        ]
+        if self.name not in HIERARCHY:
+            return False
+        elif other.name not in HIERARCHY:
+            return True
+        logging.info(f'Comparing {self.name} {HIERARCHY.index(self.name)} vs {other.name} {HIERARCHY.index(other.name)}')
+        return (HIERARCHY.index(self.name) < HIERARCHY.index(other.name))
 
 
 @dataclass
@@ -57,13 +67,18 @@ class Security:
 
 
 @dataclass
+class PriceValue:
+    type_: PriceType
+    value: float
+
+
+@dataclass
 class Price:
     security: Security
     source: PriceSource
     data_date: datetime.date
     modified_at: datetime.datetime
-    type_: PriceType
-    value: float
+    values: List[PriceValue]
 
     def to_dict(self):
         """ Export an instance to dict format """
@@ -71,22 +86,35 @@ class Price:
             , 'data_date': self.data_date.isoformat()
             , 'source': self.source.name
             , 'modified_at': self.modified_at.isoformat()
-            , self.type_.name: self.value
+            # , self.type_.name: self.value
         }
+        values = {pv.type_.name: pv.value for pv in self.values}
+        res.update(values)
         return res
 
     @classmethod
     def from_dict(cls, data: dict):
         """ Create an instance from dict """
+        logging.debug(f'Creating price from dict: {data}')
         try:
             security = Security(data['lw_id'])
-            source = PriceSource[data['source']]
-            data_date = datetime.date.fromisoformat(data['data_date'])
-            modified_at = datetime.datetime.fromisoformat(data['modified_at'])
-            type_ = PriceType[data['type']]
-            value = data.get(type_.name, 0.0)
-            return cls(security, source, data_date, modified_at, type_, value)
-        except (KeyError, AttributeError):
+            source = PriceSource(data['source'])
+            data_date = (datetime.date.fromisoformat(data['data_date']) 
+                    if isinstance(data['data_date'], str) else data['data_date'])
+            modified_at = (datetime.datetime.fromisoformat(data['modified_at']) 
+                    if isinstance(data['modified_at'], str) else data['modified_at'])
+            
+            # Caller should provide a "values" dict containing types with their values, e.g. price/yield/duration
+            if 'values' in data:
+                values = [PriceValue(PriceType(k), v) for k, v in data['values'].items()]
+            else:
+                # IF not provided, fall back on any of the following fields which were provided
+                values = [PriceValue(PriceType(k), data[k]) for k in data
+                        if k in ('price', 'yield', 'duration')]
+            logging.debug(f'Creating price with values {values}')
+            return cls(security, source, data_date, modified_at, values)
+        except (KeyError, AttributeError) as e:
+            logging.exception(e)
             return None  # If not all required attributes are provided, cannot create the instance
 
 
@@ -107,10 +135,16 @@ class SecurityWithPrices:
     def from_dict(cls, data: dict):
         """ Create an instance from dict """
         try:
-            security = Security(data['lw_id'])
+            security_attributes = {k: v for k,v in data.items()
+                    if k not in ('lw_id', 'data_date', 'prices')}
+            security = Security(data['lw_id'], security_attributes)
             data_date = datetime.date.fromisoformat(data['data_date'])
             prices = [Price.from_dict(px_data) for px_data in data['prices']]
-            if None in (security, data_date) or None in prices:
+
+            # Remove any null prices
+            prices = [px for px in prices if px is not None]
+
+            if None in (security, data_date):
                 return None  # If not all required attributes are provided, cannot create the instance
             return cls(security, data_date, prices)
         except (KeyError, AttributeError):
@@ -121,6 +155,23 @@ class SecurityWithPrices:
 class PriceBatch:
     source: PriceSource
     data_date: datetime.date
+
+    def to_dict(self):
+        """ Export an instance to dict format """
+        return {
+            'source': self.source.name
+            , 'data_date': self.data_date.isoformat()
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        """ Create an instance from dict """
+        try:
+            data_date = (datetime.date.fromisoformat(data['data_date']) 
+                    if isinstance(data['data_date'], str) else data['data_date'])
+            return cls(PriceSource(data['source']), data_date)
+        except (KeyError, AttributeError):
+            return None  # If not all required attributes are provided, cannot create the instance
 
 
 @dataclass

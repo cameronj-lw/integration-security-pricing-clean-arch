@@ -12,12 +12,12 @@ from sqlalchemy import exc, update
 from app.application.models import ColumnConfig, UserWithColumnConfig
 from app.application.repositories import UserWithColumnConfigRepository
 from app.domain.models import (
-    Price, Security, PriceAuditEntry
+    Price, Security, PriceAuditEntry, PriceBatch
     , PriceFeed, PriceFeedWithStatus, PriceSource, PriceType
     , Position
 )
 from app.domain.repositories import (
-    SecurityRepository, PriceRepository
+    SecurityRepository, PriceRepository, PriceBatchRepository
     , PriceFeedRepository, PriceFeedWithStatusRepository
     , PriceAuditEntryRepository, PriceSourceRepository, PriceTypeRepository
     , PositionRepository
@@ -27,6 +27,7 @@ from app.infrastructure.sql_models import (
 )
 from app.infrastructure.sql_tables import (
     CoreDBManualPricingSecurityTable, CoreDBColumnConfigTable
+    , CoreDBvwPriceView, CoreDBvwSecurityView, CoreDBvwPriceBatchView
     , LWDBAPXAppraisalTable
 )
 from app.infrastructure.util.config import AppConfig
@@ -42,8 +43,11 @@ class CoreDBSecurityRepository(SecurityRepository):
     def create(self, security: Security) -> Security:
         pass  # TODO: implement
 
-    def get(self, lw_id: str) -> List[Security]:
-        pass
+    def get(self, lw_id: Union[str,None] = None) -> List[Security]:
+        query_result = CoreDBvwSecurityView().read(lw_id=lw_id)
+        # query result should be a DataFrame. Need to convert to list of Securities:
+        secs = [Security(sec['lw_id'], sec) for sec in query_result.to_dict('records')]
+        return secs
 
 
 class CoreDBManualPricingSecurityRepository(SecurityRepository):
@@ -139,9 +143,77 @@ class CoreDBPriceRepository(PriceRepository):
     def create(self, price: Price) -> Price:
         pass
 
-    def get(self, data_date: Optional[datetime.date], source: Optional[PriceSource]
-            , type_: Optional[PriceType], security: Optional[Security]) -> List[Price]:
+    def get(self, data_date: datetime.date, source: Union[PriceSource,None]=None
+            , security: Union[Security,None]=None) -> List[Price]:
+        query_result = CoreDBvwPriceView().read(data_date=data_date, source_name=(None if source is None else source.name)
+                , lw_id=(security.lw_id if security is not None else None))
+        query_result_dicts = query_result.to_dict('records')
+
+        res = []
+        
+        for qr in query_result_dicts:
+            logging.debug(f'Processing price query result: {qr}')
+            price_dict = qr.copy()
+            
+            # Need to put price/yield/duration into a separate "values" item:
+            values = {}
+            for k in ('price', 'yield', 'duration'):
+                if k not in price_dict:
+                    continue
+                values[k] = qr[k]
+                del qr[k]
+            price_dict['values'] = values
+
+            # Now it has the "values" in a separate item. Add to master list.
+            # price_dicts.append(price_dict)
+            res.append(Price.from_dict(price_dict))
+
+
+        # Once all are ready, prepare the list of Prices and return
+        return res  # [Price.from_dict(px) for px in price_dicts]
+
+
+class CoreDBPriceBatchRepository(PriceBatchRepository):
+    def create(self, price: PriceBatch) -> PriceBatch:
         pass
+
+    def get(self, data_date: Union[datetime.date,None]=None
+            , source: Union[PriceSource,None]=None) -> List[PriceBatch]:
+        # Query from DB, get results into list of dicts
+        query_result = CoreDBvwPriceBatchView().read(data_date=data_date, source_name=(None if source is None else source.name))
+        query_result_dicts = query_result.to_dict('records')
+
+        # Create list of PriceBatches
+        batches = [PriceBatch.from_dict(qrd) for qrd in query_result_dicts]
+
+        # Translate price sources and return
+        for pb in batches:
+            pass  # pb.source = self.translate_price_source(pb.source)
+        return batches
+
+    def translate_price_source(self, source: PriceSource) -> PriceSource:
+        """ Translate the price source from the batch into a more generic source
+        
+        Args:
+        - source (PriceSource): Source to translate.
+
+        Returns:
+        - PriceSource: Translated source.
+        """
+        if source.name[:3] == 'BB_' and '_DERIVED' not in source.name:
+            return PriceSource('BLOOMBERG')
+        elif source.name == 'FTSETMX_PX':
+            return PriceSource('FTSE')
+        elif source.name == 'MARKIT_LOAN_CLEANPRICE':
+            return PriceSource('MARKIT')
+        elif source.name == 'FUNDRUN_EQUITY':
+            return PriceSource('FUNDRUN')
+        elif source.name in ('FIDESK_MANUALPRICE', 'LW_OVERRIDE'):
+            return PriceSource('OVERRIDE')
+        elif source.name in ('FIDESK_MISSINGPRICE', 'LW_MANUAL'):
+            return PriceSource('MANUAL')
+        else:
+            return source
 
 
 class LWDBAPXAppraisalPositionRepository(PositionRepository):

@@ -18,7 +18,17 @@ class SecurityRepository(ABC):
         pass
 
     @abstractmethod
-    def get(self, lw_id: Optional[str]) -> List[Security]:
+    def get(self, lw_id: Union[str,None] = None) -> List[Security]:
+        pass
+
+
+class SecuritiesForDateRepository(ABC):
+    @abstractmethod
+    def create(self, data_date: datetime.date, security: Union[Security, List[Security]]) -> int:
+        pass
+
+    @abstractmethod
+    def get(self, data_date: datetime.date, security: Union[Security, None] = None) -> List[Security]:
         pass
 
 
@@ -28,7 +38,8 @@ class PriceRepository(ABC):
         pass
 
     @abstractmethod
-    def get(self, data_date: datetime.date, source: PriceSource, type_: PriceType, security: Security) -> List[Price]:
+    def get(self, data_date: datetime.date, source: Union[PriceSource,None]=None
+            , security: Union[Security,None]=None) -> List[Price]:
         pass
 
 
@@ -38,7 +49,8 @@ class PriceBatchRepository(ABC):
         pass
 
     @abstractmethod
-    def get_prices(self, data_date: datetime.date, source: PriceSource) -> List[Price]:
+    def get(self, data_date: Union[datetime.date,None]=None
+            , source: Union[PriceSource,None]=None) -> List[PriceBatch]:
         pass
 
 

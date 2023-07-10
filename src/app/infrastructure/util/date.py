@@ -100,8 +100,11 @@ def get_nearest_quarter_end(ref_date):
     """
     Get the closest past quarter end date to reference date
 
-    :param ref_date: Reference date
-    :return: Closest QE date
+    Args:
+    - ref_date (datetime.date): Reference date
+    
+    Returns:
+    - datetime.date: Closest QE date
     """
     # Create a list of all possible nearest QEs for the ref date.
     qe_dates = [
@@ -130,8 +133,11 @@ def get_nearest_year_end(ref_date):
     """
     Get the closest past year end date to reference date
 
-    :param ref_date: Reference date
-    :return: Closest YE date
+    Args:
+    - ref_date (datetime.date): Reference date
+    
+    Returns:
+    - datetime.date: Closest YE date
     """
     # Create a list of all possible nearest YEs for the ref date.
     ye_dates = [
@@ -157,8 +163,11 @@ def get_current_bday(ref_date):
     """
     Get the closest past or current business date to reference date
 
-    :param ref_date: Reference date
-    :return: Closest biz date
+    Args:
+    - ref_date (datetime.date): Reference date
+    
+    Returns:
+    - datetime.date: Closest biz date
     """
     calendar = LWDBCalendarTable().read_for_date(ref_date)
     curr_bday = calendar['curr_bday']
@@ -169,8 +178,11 @@ def get_previous_bday(ref_date):
     """
     Get the previous business date to reference date
 
-    :param ref_date: Reference date
-    :return: Previous biz date
+    Args:
+    - ref_date (datetime.date): Reference date
+    
+    Returns:
+    - datetime.date: Previous biz date
     """
     calendar = LWDBCalendarTable().read_for_date(ref_date)
     prev_bday = calendar['prev_bday']
@@ -181,8 +193,11 @@ def get_next_bday(ref_date):
     """
     Get the next business date to reference date
 
-    :param ref_date: Reference date
-    :return: Next biz date
+    Args:
+    - ref_date (datetime.date): Reference date
+    
+    Returns:
+    - datetime.date: Next biz date
     """
     calendar = LWDBCalendarTable().read_for_date(ref_date)
     prev_bday = calendar['next_bday']
@@ -193,8 +208,11 @@ def format_time(t):
     """
     Get time string with only 3 decimal places for seconds
 
-    :param t: Time to format
-    :return: String representing time with seconds chopped off after 3 decimal places
+    Args:
+    - t (datetime.time): Time to format
+    
+    Returns:
+    - String representing time with seconds chopped off after 3 decimal places
     """
     s = t.strftime('%Y-%m-%d %H:%M:%S.%f')
     return s[:-3]

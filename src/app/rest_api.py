@@ -1,6 +1,8 @@
 
 # core python
+import argparse
 from configparser import ConfigParser
+import datetime
 import logging
 import os
 import sys
@@ -27,6 +29,8 @@ from infrastructure.file_repositories import (
 )
 from interface.routes import blueprint  # import routes
 from infrastructure.util.config import AppConfig
+from infrastructure.util.file import prepare_dated_file_path
+from infrastructure.util.logging import setup_logging
 
 
 
@@ -61,6 +65,11 @@ app.register_blueprint(blueprint, config=app.config)
 
 if __name__ == '__main__':
     try:
+        parser = argparse.ArgumentParser(description='Kafka Consumer')
+        parser.add_argument('--log_level', '-l', type=str.upper, choices=['DEBUG', 'INFO', 'WARN', 'ERROR', 'CRITICAL'], help='Log level')
+        args = parser.parse_args()
+        log_file = prepare_dated_file_path(AppConfig().get("logging", "log_dir"), datetime.date.today(), AppConfig().get("logging", "rest_api_logfile"))
+        setup_logging(args.log_level, log_file)
         host = AppConfig().get("rest_api", "host")
         port = AppConfig().get("rest_api", "port")
         debug = AppConfig().get("rest_api", "debug")

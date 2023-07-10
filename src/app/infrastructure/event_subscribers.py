@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import datetime
 import json
 import logging
+import time
 from typing import List, Type
 
 
@@ -16,7 +17,7 @@ from app.domain.events import Event, AppraisalBatchCreatedEvent, PriceBatchCreat
 from app.domain.event_handlers import EventHandler
 from app.domain.event_subscribers import EventSubscriber
 from app.domain.message_brokers import MessageBroker
-from app.domain.models import Security, AppraisalBatch, PriceBatch
+from app.domain.models import Security, AppraisalBatch, PriceBatch, PriceSource
 
 from app.infrastructure.message_brokers import KafkaBroker
 from app.infrastructure.util.config import AppConfig
@@ -70,8 +71,14 @@ class KafkaEventConsumer(EventSubscriber):
                     logging.error("ERROR: %s".format(msg.error()))
                     # TODO: raise exception?
                 elif msg.value() is not None:
+                    logging.info(f"Consuming message: {msg.value()}")
                     event = self.deserialize(msg.value())
+                    logging.info(f"Handling {event}")
                     self.event_handler.handle(event)  
+                    logging.info(f"Done handling {event}")
+                    # self.consumer.commit(message=msg, asynchronous=False)
+                    # logging.info("Done committing offset")
+                time.sleep(5)
         except KeyboardInterrupt:
             pass
         finally:
@@ -83,6 +90,7 @@ class KafkaEventConsumer(EventSubscriber):
         # TODO: confirm this works as class method
         if self.reset_offset:
             for p in partitions:
+                logging.info(f"Resetting offset for {p}")
                 p.offset = OFFSET_BEGINNING
             consumer.assign(partitions)
 
@@ -154,17 +162,11 @@ class KafkaCoreDBPriceBatchCreatedEventConsumer(KafkaEventConsumer):
         super().__init__(message_broker=KafkaBroker(), event_class=PriceBatchCreatedEvent
                 , event_handler=event_handler, topics=[AppConfig().parser.get('kafka_topics', 'coredb_price_batch')])
 
-    def deserialize(self, message_value: bytes) -> AppraisalBatchCreatedEvent:
-        """ 
-        Since the Security object requires an lw_id and dict of attributes, 
-        we will separate them out here rather than using the default base class deserialize
-        """
+    def deserialize(self, message_value: bytes) -> PriceBatchCreatedEvent:
         event_dict = json.loads(message_value.decode('utf-8'))
         event_dict = {k.lower(): v for k, v in event_dict.items()}
-        if 'portfolios' not in event_dict:
-            event_dict['portfolios'] = '@LW_OpenandMeasurementandTest'  # TODO: should this be an assumed default?
         date = (datetime.datetime(year=1970, month=1, day=1) + datetime.timedelta(days=event_dict['data_date'])).date()
-        batch = AppraisalBatch(portfolios=event_dict['portfolios'], data_date=date)
+        batch = PriceBatch(source=PriceSource(event_dict['source']), data_date=date)
         event = self.event_class(batch)
         return event
 

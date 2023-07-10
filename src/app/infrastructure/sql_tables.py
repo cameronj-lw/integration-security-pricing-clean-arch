@@ -58,6 +58,73 @@ class CoreDBColumnConfigTable(BaseTable):
 		return self.execute_read(stmt)
 
 
+class CoreDBvwPriceView(BaseTable):
+	config_section = 'coredb'
+	table_name = 'vw_price'
+
+	def read(self, data_date=None, source_name=None, lw_id=None):
+		"""
+		Read all entries
+
+		:return: DataFrame
+		"""
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		if data_date is not None:
+			stmt = stmt.where(self.c.data_date == data_date)
+		if source_name is not None:
+			stmt = stmt.where(self.c.source == source_name)
+		if lw_id is not None:
+			stmt = stmt.where(self.c.lw_id == lw_id)
+		return self.execute_read(stmt)
+
+
+class CoreDBvwSecurityView(BaseTable):
+	config_section = 'coredb'
+	table_name = 'vw-security'
+
+	def read(self, lw_id=None):
+		"""
+		Read all entries
+
+		:return: DataFrame
+		"""
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		if lw_id is not None:
+			stmt = stmt.where(self.c.lw_id == lw_id)
+		return self.execute_read(stmt)
+
+
+class CoreDBvwPriceBatchView(BaseTable):
+	config_section = 'coredb'
+	schema = 'pricing'
+	table_name = 'vw-price-batch'
+
+	def read(self, data_date=None, source_name=None):
+		"""
+		Read all entries
+
+		:return: DataFrame
+		"""
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		if data_date is not None:
+			stmt = stmt.where(self.c.data_date == data_date)
+		if source_name is not None:
+			stmt = stmt.where(self.c.source == source_name)
+		return self.execute_read(stmt)
+
+
 """
 LWDB
 """
