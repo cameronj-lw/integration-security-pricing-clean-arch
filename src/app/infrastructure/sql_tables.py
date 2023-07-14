@@ -8,6 +8,35 @@ from app.infrastructure.util.table import BaseTable, ScenarioTable
 
 
 """
+APXDB
+"""
+
+class APXDBvPriceTable(BaseTable):
+	config_section = 'apxdb'
+	table_name = 'vPrice'
+	schema = 'APX'
+
+	def read(self, security_id=None, price_date=None, price_type_id=None):
+		"""
+		Read all entries, optionally by SecurityID/PriceDate/PriceTypeID
+
+		:return: DataFrame
+		"""
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		if security_id is not None:
+			stmt = stmt.where(self.c.SecurityID == security_id)
+		if price_date is not None:
+			stmt = stmt.where(self.c.PriceDate == price_date)
+		if price_type_id is not None:
+			stmt = stmt.where(self.c.PriceTypeID == price_type_id)
+		return self.execute_read(stmt)
+
+
+"""
 COREDB
 """
 
@@ -156,6 +185,30 @@ class LWDBCalendarTable(ScenarioTable):
 class LWDBAPXAppraisalTable(ScenarioTable):
 	config_section = 'lwdb'
 	table_name = 'apx_appraisal'
+
+	def read_for_date(self, data_date):
+		"""
+		Read all entries for a specific date and with the latest scenario
+
+		:param data_date: The data date
+		:return: DataFrame
+		"""
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		stmt = (
+			stmt
+			.where(self.c.scenario == self.base_scenario)
+			.where(self.c.data_dt == data_date)
+		)
+		data = self.execute_read(stmt)
+		return data
+
+
+class LWDBPricingTable(ScenarioTable):
+	config_section = 'lwdb'
+	table_name = 'pricing'
 
 	def read_for_date(self, data_date):
 		"""

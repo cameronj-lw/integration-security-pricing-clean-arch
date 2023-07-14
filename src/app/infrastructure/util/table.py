@@ -240,7 +240,7 @@ class ScenarioTable(BaseTable):
         return next_rotation
 
 
-    def rotate(self, data_date=None, extra_where=None):
+    def rotate(self, data_date=None, extra_where=None, commit=False):
         """
         Rotate data with data_dt matching data_date. Updates scenario BASE to BASE.X.
 
@@ -248,6 +248,7 @@ class ScenarioTable(BaseTable):
 
         :param data_date: The data date
         :param extra_where: Optional extra where statement
+        :param commit: Whether to commit (rollback if not set)
         :returns: The number of the newly created rotation or None if no data found
         """
         next_rotation = self._get_next_rotation(data_date, extra_where)
@@ -266,7 +267,7 @@ class ScenarioTable(BaseTable):
             if extra_where is not None:
                 stmt = stmt.where(extra_where)
 
-            updated_rows = self._database.execute_write(stmt)
+            updated_rows = self._database.execute_write(stmt, commit=commit)
             logging.debug(
                 '%s: Rotated %d rows to %s for %s',
                 self.table_name,

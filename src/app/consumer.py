@@ -36,7 +36,7 @@ from infrastructure.util.logging import setup_logging
 def main():
     parser = argparse.ArgumentParser(description='Kafka Consumer')
     parser.add_argument('--data_type', '-dt', type=str, required=True
-        , choices=['price-batch', 'appraisal-batch', 'security', 'security-refresh', 'price-refresh'], help='Type of data to consume')
+        , choices=['price-batch', 'appraisal-batch', 'security', 'security-refresh', 'master-refresh', 'price-refresh'], help='Type of data to consume')
     parser.add_argument('--reset_offset', '-ro', action='store_true', default=False, help='Reset consumer offset to beginning')
     parser.add_argument('--log_level', '-l', type=str.upper, choices=['DEBUG', 'INFO', 'WARN', 'ERROR', 'CRITICAL'], help='Log level')
     parser.add_argument('--refresh_prices', '-rp', type=str, required=False, help='Refresh prices for date, YYYYMMDD format')
@@ -85,6 +85,12 @@ def main():
             #     continue  # TODO_DEBUG: remove
             logging.info(f'Handling security: {sec}')
             event_handler.handle(SecurityCreatedEvent(sec))
+    elif args.data_type == 'master-refresh':
+        setup_logging(args.log_level)
+        secs = CoreDBSecurityRepository().get()
+        JSONHeldSecuritiesWithPricesRepository().refresh_for_securities(
+            data_date=datetime.datetime.strptime(args.refresh_prices, '%Y%m%d').date(), securities=secs
+        )
     elif args.data_type == 'price-refresh':
         price_batches = CoreDBPriceBatchRepository().get(
                 data_date=datetime.datetime.strptime(args.refresh_prices, '%Y%m%d').date())

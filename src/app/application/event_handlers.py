@@ -47,7 +47,7 @@ class SecurityCreatedEventHandler(EventHandler):
             self.security_with_prices_repository.add_security(data_date=d, security=security)
             self.held_securities_with_prices_repository.refresh_for_securities(data_date=d, securities=[security])
 
-    def get_dates_to_update(self, num_days_back=14):
+    def get_dates_to_update(self, num_days_back=7):
         """ Get a list of dates which we want to update in response to a new/changed security.
         
         Args:
@@ -56,7 +56,7 @@ class SecurityCreatedEventHandler(EventHandler):
         Returns:
         - list of datetime.date: Dates for which we want to update.
         """
-        return [datetime.date(year=2023, month=7, day=7)]  # for debug
+        return [datetime.date.today()]  # [datetime.date(year=2023, month=7, day=7)]  # TODO_DEBUG: remove this
         res = []
         # Start with today
         today = date = datetime.date.today()
@@ -93,23 +93,25 @@ class PriceBatchCreatedEventHandler(EventHandler):
         data_date = price_batch.data_date
 
         # TODO_DEBUG: remove below - timesaver
-        self.held_securities_with_prices_repository.refresh_for_securities(data_date=data_date, securities=[px.security for px in new_prices])
-        return
+        # self.held_securities_with_prices_repository.refresh_for_securities(data_date=data_date, securities=[px.security for px in new_prices])
+        # return
 
-        if data_date != datetime.date(year=2023, month=7, day=7):
-            return  # TODO_DEBUG: remove?
+        if data_date < datetime.date(year=2023, month=7, day=10):
+            return  # TODO_DEBUG: remove (timesaver)
             
-        translated_source = self.translate_price_source(price_batch.source)
-
-        if price_batch.source == 'TXPR':
+        if price_batch.source.name == 'TXPR':
             return  # TODO_DEBUG: remove ... time saver
 
-        if price_batch.source == 'PXAPX':
+        translated_source = self.translate_price_source(price_batch.source)
+
+        if price_batch.source.name == 'PXAPX':
+            logging.info(f'Processing {len(new_prices)} prices from {price_batch.source}')
             data_date = get_next_bday(data_date)
             for px in new_prices:
                 px.source = translated_source
                 self.security_with_prices_repository.add_price(price=px, mode='prev')
         elif self.feed_is_relevant(translated_source):
+            # return  # TODO_DEBUG: remove (timesaver)
             logging.info(f'Processing {len(new_prices)} prices from {price_batch.source}')
             logged = False
             for px in new_prices:
@@ -138,7 +140,9 @@ class PriceBatchCreatedEventHandler(EventHandler):
         Returns:
         - bool: True if the feed is relevant, else False.
         """
-        relevant_price_source_names = AppConfig().parser.get('app', 'relevant_pricing_feeds').split(',')
+        relevant_price_source_names = (
+            AppConfig().parser.get('app', 'vendor_price_sources').split(',')
+            + AppConfig().parser.get('app', 'lw_price_sources').split(','))
         relevant_price_source_names = [s.strip() for s in relevant_price_source_names]
         # TODO: should relevant price sources be different than relevant pricing feeds in the config? 
         return (source.name in relevant_price_source_names)
@@ -164,6 +168,8 @@ class PriceBatchCreatedEventHandler(EventHandler):
             return PriceSource('OVERRIDE')
         elif source.name in ('FIDESK_MISSINGPRICE', 'LW_MANUAL'):
             return PriceSource('MANUAL')
+        elif source.name == 'PXAPX':
+            return PriceSource('APX')
         else:
             return source
 
@@ -180,6 +186,11 @@ class AppraisalBatchCreatedEventHandler(EventHandler):
     def handle(self, event: AppraisalBatchCreatedEvent):
         """ Handle the event """
         appraisal_batch = event.appraisal_batch
+
+        # TODO_DEBUG: remove (timesaver)
+        # if appraisal_batch.data_date != datetime.date(year=2023, month=7, day=6):
+        #     return
+
         next_bday = get_next_bday(appraisal_batch.data_date)
         # Perform actions in response to AppraisalBatchCreatedEvent
         # TODO: inspect "portfolios" here, and ignore if not @LW_ALL_OpenAndMeasurement?
@@ -198,7 +209,7 @@ class AppraisalBatchCreatedEventHandler(EventHandler):
         if self.held_securities_repository.get(data_date=next_bday) is None:
             self.held_securities_repository.create(data_date=next_bday, securities=held_secs)
 
-        # Update master RM
-        self.held_securities_with_prices_repository.refresh_for_securities(data_date=appraisal_batch.data_date, securities=held_secs)
+        # Update master RM, removing securities which are not in the Appraisal result because they are not held
+        self.held_securities_with_prices_repository.refresh_for_securities(data_date=appraisal_batch.data_date, securities=held_secs, remove_other_secs=True)
 
 

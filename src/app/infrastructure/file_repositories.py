@@ -107,7 +107,7 @@ class JSONHeldSecuritiesWithPricesRepository(SecuritiesWithPricesRepository):
         else:
             return get_res
 
-    def refresh_for_securities(self, data_date: datetime.date, securities: List[Security]):
+    def refresh_for_securities(self, data_date: datetime.date, securities: List[Security], remove_other_secs=False):
         # Find which securities to refresh. This will be the ones from the provided list which are held.
         held_secs = JSONHeldSecuritiesRepository().get(data_date)
         if held_secs is None:
@@ -120,18 +120,23 @@ class JSONHeldSecuritiesWithPricesRepository(SecuritiesWithPricesRepository):
 
         # Get other securities as a starting point
         orig_get_res = self.get(data_date)
-        if orig_get_res is None:
+        if orig_get_res is None or remove_other_secs:
             res = []
         else:
             res = [swp for swp in orig_get_res if swp.security.lw_id not in lw_ids_to_refresh]
         
         # Loop thru and append each security to result
-        logging.info(f'Refreshing for {len(lw_ids_to_refresh)} securities...')
+        logging.info(f'Refreshing master RM for {len(lw_ids_to_refresh)} securities...')
+        logged = False
         for lw_id in lw_ids_to_refresh:
-            swp_dict = get_read_model_content(read_model_name=JSONHeldSecuritiesWithPricesRepository().read_model_name
+            swp_dict = get_read_model_content(read_model_name=JSONSecurityWithPricesRepository().read_model_name
                     , file_name=f'{lw_id}.json', data_date=data_date)
+            logging.debug(f'Refreshing for {swp_dict}')
             swp = SecurityWithPrices.from_dict(swp_dict)
             if swp is not None:
+                if not logged:
+                    logging.debug(f'Appending {swp}')
+                    logged = True
                 res.append(swp)
 
         # Put into JSON format
@@ -205,7 +210,7 @@ class JSONSecurityWithPricesRepository(SecurityWithPricesRepository):
 
     def create(self, swp: SecurityWithPrices) -> SecurityWithPrices:
         # Get into JSON format
-        swp_dict = self.get_supplemented_dict(swp)
+        swp_dict = swp.to_dict()  # self.get(swp.data_date, swp.security)[0].to_dict()  # get_supplemented_dict(swp)
         json_content = json.dumps(swp_dict, indent=4, default=str)
 
         target_file = get_read_model_file(read_model_name=self.read_model_name, file_name=f'{swp.security.lw_id}.json', data_date=swp.data_date)
@@ -219,32 +224,33 @@ class JSONSecurityWithPricesRepository(SecurityWithPricesRepository):
         else:
             return get_res[0]
 
-    def get_supplemented_dict(self, swp: SecurityWithPrices):
-        swp_dict = swp.to_dict()
+    # TODO_CLEANUP: remove when not needed
+    # def get_supplemented_dict(self, swp: SecurityWithPrices):
+    #     swp_dict = swp.to_dict()
 
-        # Get curr & prev bday:
-        curr_bday, prev_bday = get_current_bday(swp.data_date), get_previous_bday(swp.data_date)
+    #     # Get curr & prev bday:
+    #     curr_bday, prev_bday = get_current_bday(swp.data_date), get_previous_bday(swp.data_date)
 
-        # Add curr bday price(s)
-        curr_bday_prices = [px for px in swp.prices if px.data_date == curr_bday]
-        swp_dict['curr_bday_prices'] = [px.to_dict() for px in curr_bday_prices]
+    #     # Add curr bday price(s)
+    #     curr_bday_prices = [px for px in swp.prices if px.data_date == curr_bday]
+    #     swp_dict['curr_bday_prices'] = [px.to_dict() for px in curr_bday_prices]
         
-        # Add prev bday price(s)
-        prev_bday_prices = [px for px in swp.prices if px.data_date == prev_bday]
-        if len(prev_bday_prices):
-            swp_dict['prev_bday_price'] = [prev_bday_prices[0].to_dict()]
-        else:
-            swp_dict['prev_bday_price'] = []
+    #     # Add prev bday price(s)
+    #     prev_bday_prices = [px for px in swp.prices if px.data_date == prev_bday]
+    #     if len(prev_bday_prices):
+    #         swp_dict['prev_bday_price'] = prev_bday_prices[0].to_dict()
+    #     else:
+    #         swp_dict['prev_bday_price'] = {}
 
-        # Determine and add chosen price
-        chosen_price = None
-        for px in curr_bday_prices:
-            if chosen_price is None:
-                chosen_price = px
-            elif px.source > chosen_price.source:  # See __gt__ method in domain model
-                chosen_price = px
-        swp_dict['chosen_price'] = {} if chosen_price is None else chosen_price.to_dict()
-        return swp_dict
+    #     # Determine and add chosen price
+    #     chosen_price = None
+    #     for px in curr_bday_prices:
+    #         if chosen_price is None:
+    #             chosen_price = px
+    #         elif px.source > chosen_price.source:  # See __gt__ method in domain model
+    #             chosen_price = px
+    #     swp_dict['chosen_price'] = {} if chosen_price is None else chosen_price.to_dict()
+    #     return swp_dict
 
     def add_price(self, price: Price, mode='curr') -> SecurityWithPrices:
         logging.debug(f'Adding price: {price}')
@@ -257,27 +263,39 @@ class JSONSecurityWithPricesRepository(SecurityWithPricesRepository):
         if swp is None:
             # Just need to create the file with security info, plus this new price:
             logging.debug(f'No swp found. Creating...')
-            return self.create(SecurityWithPrices(security=price.security, data_date=data_date, prices=[price]))
+            if mode == 'prev':
+                return self.create(SecurityWithPrices(security=price.security, data_date=data_date, prev_bday_price=price))
+            else:
+                return self.create(SecurityWithPrices(security=price.security, data_date=data_date, curr_bday_prices=[price]))
         elif swp[0] is None:
             # Just need to create the file with security info, plus this new price:
             logging.debug(f'swp[0] is None. Creating...')
-            return self.create(SecurityWithPrices(security=price.security, data_date=data_date, prices=[price]))
+            if mode == 'prev':
+                return self.create(SecurityWithPrices(security=price.security, data_date=data_date, prev_bday_price=price))
+            else:
+                return self.create(SecurityWithPrices(security=price.security, data_date=data_date, curr_bday_prices=[price]))
         else:
             swp = swp[0]
             logging.debug(f'Found swp: {swp}')
-            # Need to replace the existing price from the provided source & type, 
-            # or add this price if there's not yet a price with the provided source & type
-            prices = [px for px in swp.prices if (px.source != price.source)]
-            prices.append(price)
-            swp.prices = prices 
+
+            # If adding prev bday price, we can just replace the existing one (if it already has one):
+            if mode == 'prev':
+                swp.prev_bday_price = price
+            # Otherwise, we need to add the price to any others from curr day (from other sources):
+            else:
+                curr_bday_prices = [px for px in swp.curr_bday_prices if (px.source != price.source)]
+                curr_bday_prices.append(price)
+                swp.curr_bday_prices = curr_bday_prices 
+
+            # Finally, create the SWP and return it
             logging.debug(f'Creating SecurityWithPrice... {swp}')
             return self.create(swp)
 
     def add_security(self, data_date: datetime.date, security: Security) -> SecurityWithPrices:
         swps = self.get(data_date=data_date, security=security)
         if swps is None:
-            # Just need to create the file with security info, plus this new price:
-            return self.create(SecurityWithPrices(security=security, data_date=data_date, prices=[]))
+            # Just need to create the file with security info:
+            return self.create(SecurityWithPrices(security=security, data_date=data_date))
         else:
             # Need to replace the existing security
             logging.debug(f'swps: {swps}')
@@ -292,7 +310,7 @@ class JSONSecurityWithPricesRepository(SecurityWithPricesRepository):
             if swp_dict is None:
                 return None  # DNE yet
             else:
-                logging.debug(f'Creating SWP from dict: {swp_dict}')
+                logging.info(f'Creating SWP from dict: {swp_dict}')
                 swp = SecurityWithPrices.from_dict(swp_dict)
                 logging.debug(f'Created {swp}')
                 return [swp]
@@ -325,7 +343,7 @@ class JSONPriceAuditEntryRepository(PriceAuditEntryRepository):
 class DataDirDateWithPricingAttachmentsRepository(DateWithPricingAttachmentsRepository):
     def create(self, date_with_attachments: DateWithPricingAttachments) -> int:
         data_dir = AppConfig().parser.get('files', 'data_dir')
-        base_dir = os.path.join(data_dir, 'lw', 'pricing_audit')
+        base_dir = os.path.join(data_dir, 'lw', 'security_pricing', 'audit')
         target_dir = prepare_dated_file_path(folder_name=base_dir, date=date_with_attachments.data_date, file_name='', rotate=False)
         for f in date_with_attachments.attachments:
             # Create the file path
@@ -338,7 +356,7 @@ class DataDirDateWithPricingAttachmentsRepository(DateWithPricingAttachmentsRepo
 
     def get(self, data_date: datetime.date) -> DateWithPricingAttachments:
         data_dir = AppConfig().parser.get('files', 'data_dir')
-        base_dir = os.path.join(data_dir, 'lw', 'pricing_audit')
+        base_dir = os.path.join(data_dir, 'lw', 'security_pricing', 'audit')
         target_dir = prepare_dated_file_path(folder_name=base_dir, date=data_date, file_name='', rotate=False)
         attachments = []
         for f in os.listdir(target_dir):

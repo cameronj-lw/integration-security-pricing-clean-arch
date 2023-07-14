@@ -127,13 +127,14 @@ def get_read_model_content(read_model_name: str, file_name: str, data_date: Unio
 
     Args:
     - read_model_name (str): Name of the read model.
-    - file_name (str): Name of the json file.
+    - file_name (str): Name of the file, including extension.
     - data_date (optional: date): Date to retrieve read model for.
 
     Returns:
     - likely dict or list: The JSON content. Or None, if the file DNE.
     """
     read_model_file = get_read_model_file(read_model_name, file_name, data_date)
+    logging.debug(f'Looking for RM file {read_model_file}')
     if not os.path.isfile(read_model_file):
         return None
     with open(read_model_file, 'r') as f:

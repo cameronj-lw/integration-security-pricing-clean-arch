@@ -2,8 +2,8 @@
 # core python
 from dataclasses import dataclass, field
 import datetime
-import logging
-from typing import List, Type
+import logging  # TODO_CLEANUP: remove when not needed ... domain layer shouldn't do logging
+from typing import List, Type, Union
 
 
 @dataclass
@@ -21,7 +21,6 @@ class PriceSource:
     # ]
 
     def __gt__(self, other):
-        logging.error(f'Inside __gt__! {self} {other}')
         HIERARCHY = [
             'OVERRIDE'
             ,'MANUAL'
@@ -34,8 +33,9 @@ class PriceSource:
         if self.name not in HIERARCHY:
             return False
         elif other.name not in HIERARCHY:
-            return True
-        logging.info(f'Comparing {self.name} {HIERARCHY.index(self.name)} vs {other.name} {HIERARCHY.index(other.name)}')
+            return True        
+        # TODO_CLEANUP: remove when not needed ... domain layer shouldn't do logging
+        # logging.debug(f'Comparing {self.name} {HIERARCHY.index(self.name)} vs {other.name} {HIERARCHY.index(other.name)}')
         return (HIERARCHY.index(self.name) < HIERARCHY.index(other.name))
 
 
@@ -53,6 +53,11 @@ class Security:
         """ Export an instance to dict format """
         res = {'lw_id': self.lw_id}
         res.update(self.attributes)
+
+        # Add 'apx_xxx' for any 'pms_xxx' keys
+        apx_dict = {('apx_' + k[4:]): v for k,v in res.items() if k[:4] == 'pms_'}
+        res.update(apx_dict)
+
         return res
 
     @classmethod
@@ -61,9 +66,35 @@ class Security:
         try:
             lw_id = data['lw_id']
             attributes = {key: value for key, value in data.items() if key != 'lw_id'}
+            # Add 'pms_xxx' for any 'apx_xxx' keys
+            pms_dict = {('pms_' + k[4:]): v for k,v in attributes.items() if k[:4] == 'apx_'}
+            attributes.update(pms_dict)
+
             return cls(lw_id, attributes)
         except (KeyError, AttributeError):
-            return None  # If not all required attributes are provided, cannot create the instance        
+            return None  # If not all required attributes are provided, cannot create the instance 
+
+    def get_sec_type(self):
+        if 'pms_sec_type' in self.attributes:
+            return self.attributes['pms_sec_type']
+        elif 'apx_sec_type' in self.attributes:
+            return self.attributes['apx_sec_type']
+        else:
+            return None
+
+    def is_sec_type(self, sec_type):
+        """ Determine whether this Security is of provided sec type """
+
+        # Convert to list
+        if sec_type == 'bond':
+            sec_types = ['cb', 'cf', 'cm', 'cv', 'fr', 'lb', 'ln', 'sf', 'tb', 'vm']
+        elif sec_type == 'equity':
+            sec_types = ['cc', 'ce', 'cg', 'ch', 'ci', 'cj', 'ck', 'cn', 'cr', 'cs', 'ct', 'cu', 'ps']
+        else:
+            sec_types = [sec_type]
+        
+        # Get this Security's sec type and compare
+        return self.get_sec_type()[:2] in sec_types
 
 
 @dataclass
@@ -108,7 +139,7 @@ class Price:
             if 'values' in data:
                 values = [PriceValue(PriceType(k), v) for k, v in data['values'].items()]
             else:
-                # IF not provided, fall back on any of the following fields which were provided
+                # If not provided, fall back on any of the following fields which were provided
                 values = [PriceValue(PriceType(k), data[k]) for k in data
                         if k in ('price', 'yield', 'duration')]
             logging.debug(f'Creating price with values {values}')
@@ -119,16 +150,78 @@ class Price:
 
 
 @dataclass
+class PriceAuditEntry:
+    data_date: datetime.date
+    security: Security
+    reason: str
+    comment: str
+    before: Price
+    after: Price
+    modified_by: str
+    modified_at: datetime.datetime
+
+    def to_dict(self):
+        return {
+            "data_date": self.data_date.isoformat(),
+            "lw_id": self.security.lw_id,
+            "reason": self.reason,
+            "comment": self.comment,
+            "before": self.before.to_dict(),
+            "after": self.after.to_dict(),
+            "modified_by": self.modified_by,
+            "modified_at": self.modified_at.isoformat(),
+            "asofuser": self.modified_by,
+            "asofdate": self.modified_at.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        try:
+            return cls(
+                data_date=datetime.date.fromisoformat(data["data_date"]),
+                security=Security(lw_id=data["lw_id"]),
+                reason=data["reason"],
+                comment=data["comment"],
+                before=Price.from_dict(data["before"]),
+                after=Price.from_dict(data["after"]),
+                modified_by=data["modified_by"] if 'modified_by' in data else data["asofuser"],
+                modified_at=datetime.datetime.fromisoformat(data["modified_at"] if 'modified_at' in data else data["asofdate"]),
+            )
+        except (KeyError, AttributeError) as e:
+            logging.exception(e)
+            return None  # If not all required attributes are provided, cannot create the instance
+
+
+@dataclass
 class SecurityWithPrices:
+    """ Security with attributes, for a date, optionally accompanied by prices """
+
     security: Security
     data_date: datetime.date
-    prices: List[Price]
+    curr_bday_prices: Union[List[Price],None] = None
+    prev_bday_price: Union[Price,None] = None
+    audit_trail: Union[List[PriceAuditEntry],None] = None
+
+    def get_chosen_price(self):
+        """ Get the chosen price, based on the curr_bday_prices """
+        chosen_price = None
+        if self.curr_bday_prices is None:
+            return None  # No prices, therefore there is no chosen one
+        for px in self.curr_bday_prices:
+            if chosen_price is None:
+                chosen_price = px
+            elif px.source > chosen_price.source:  # See PriceSource __gt__ method
+                chosen_price = px
+        return chosen_price
 
     def to_dict(self):
         """ Export an instance to dict format """
         res = self.security.to_dict()
         res['data_date'] = self.data_date.isoformat()
-        res['prices'] = [px.to_dict() for px in self.prices]
+        res['curr_bday_prices'] = [] if self.curr_bday_prices is None else [px.to_dict() for px in self.curr_bday_prices]
+        res['chosen_price'] = {} if self.get_chosen_price() is None else self.get_chosen_price().to_dict()
+        res['prev_bday_price'] = {} if self.prev_bday_price is None else self.prev_bday_price.to_dict()
+        res['audit_trail'] = [] if self.audit_trail is None else [at.to_dict() for at in self.audit_trail]
         return res
 
     @classmethod
@@ -136,17 +229,33 @@ class SecurityWithPrices:
         """ Create an instance from dict """
         try:
             security_attributes = {k: v for k,v in data.items()
-                    if k not in ('lw_id', 'data_date', 'prices')}
+                    if k not in ('lw_id', 'data_date', 'prices', 'curr_bday_prices', 'prev_bday_price', 'audit_trail', 'chosen_price')}
             security = Security(data['lw_id'], security_attributes)
             data_date = datetime.date.fromisoformat(data['data_date'])
-            prices = [Price.from_dict(px_data) for px_data in data['prices']]
+            curr_bday_prices = None if 'curr_bday_prices' not in data else [
+                Price.from_dict(px_data) for px_data in data['curr_bday_prices']]
+            prev_bday_price = None
+            if 'prev_bday_price' in data:
+                if data['prev_bday_price'] != {}:
+                    prev_bday_price = Price.from_dict(data['prev_bday_price'])
+            # TODO_CLEANUP: remove once not needed
+            # prev_bday_price = (None if 'prev_bday_price' not in data or isinstance(data['prev_bday_price'], list)
+            #         else Price.from_dict(data['prev_bday_price']))  # TODO: why is it a list sometimes? Legacy I assume
+            logging.debug(f'Looking for audit_trail in {data}')
+            audit_trail = None
+            if 'audit_trail' in data:
+                if data['audit_trail'] is not None and data['audit_trail'] != []:
+                    audit_trail = [PriceAuditEntry.from_dict(at_data) for at_data in data['audit_trail']]
 
-            # Remove any null prices
-            prices = [px for px in prices if px is not None]
+            # Remove any null prices and/or audit trail
+            if curr_bday_prices is not None:
+                curr_bday_prices = [px for px in curr_bday_prices if px is not None]
+            if audit_trail is not None:
+                audit_trail = [at for at in audit_trail if at is not None]
 
             if None in (security, data_date):
                 return None  # If not all required attributes are provided, cannot create the instance
-            return cls(security, data_date, prices)
+            return cls(security, data_date, curr_bday_prices, prev_bday_price, audit_trail)
         except (KeyError, AttributeError):
             return None  # If not all required attributes are provided, cannot create the instance
 
@@ -205,18 +314,6 @@ class PriceFeedWithStatus:
     status: str = None
     status_ts: datetime.datetime = None
     price_feed_class: Type[PriceFeed] = PriceFeed
-
-
-@dataclass
-class PriceAuditEntry:
-    data_date: datetime.date
-    security: Security
-    reason: str
-    comment: str
-    before: List[Price]
-    after: List[Price]
-    modified_by: str
-    modified_at: datetime.datetime
 
 
 

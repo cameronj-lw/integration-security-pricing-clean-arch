@@ -1,12 +1,15 @@
 
 # core python
+import copy
 import datetime
 import logging
+import os
+import socket
 from typing import List, Optional, Tuple, Union
 
 # pypi
 import pandas as pd
-from sqlalchemy import exc, update
+from sqlalchemy import exc, update, and_
 
 # native
 from app.application.models import ColumnConfig, UserWithColumnConfig
@@ -28,7 +31,7 @@ from app.infrastructure.sql_models import (
 from app.infrastructure.sql_tables import (
     CoreDBManualPricingSecurityTable, CoreDBColumnConfigTable
     , CoreDBvwPriceView, CoreDBvwSecurityView, CoreDBvwPriceBatchView
-    , LWDBAPXAppraisalTable
+    , LWDBAPXAppraisalTable, LWDBPricingTable
 )
 from app.infrastructure.util.config import AppConfig
 from app.infrastructure.util.date import get_current_bday, get_previous_bday
@@ -64,7 +67,7 @@ class CoreDBManualPricingSecurityRepository(SecurityRepository):
         df = pd.DataFrame(data)
         df = add_is_deleted(df)
         df = add_modified(df)
-        logging.info(f"About to insert {df}")
+        logging.debug(f"About to insert {df}")
         res = CoreDBManualPricingSecurityTable().bulk_insert(df)  # TODO: error handling?
         if isinstance(res, int):
             row_cnt = res
@@ -109,7 +112,7 @@ class CoreDBColumnConfigRepository(UserWithColumnConfigRepository):
         df = pd.DataFrame(data)
         df = add_is_deleted(df)
         df = add_modified(df)
-        logging.info(f"About to insert {df}")
+        logging.debug(f"About to insert {df}")
         res = CoreDBColumnConfigTable().bulk_insert(df)  # TODO: error handling?
         if isinstance(res, int):
             row_cnt = res
@@ -140,7 +143,7 @@ class CoreDBColumnConfigRepository(UserWithColumnConfigRepository):
 
 
 class CoreDBPriceRepository(PriceRepository):
-    def create(self, price: Price) -> Price:
+    def create(self, prices: Union[List[Price], Price]) -> Union[List[Price], Price]:
         pass
 
     def get(self, data_date: datetime.date, source: Union[PriceSource,None]=None
@@ -171,6 +174,75 @@ class CoreDBPriceRepository(PriceRepository):
 
         # Once all are ready, prepare the list of Prices and return
         return res  # [Price.from_dict(px) for px in price_dicts]
+
+
+class LWDBPriceRepository(PriceRepository):
+    def create(self, prices: Union[List[Price], Price]) -> Union[List[Price], Price]:
+        if isinstance(prices, Price):
+            # Need to convert to List in order to loop thru
+            _prices = copy.deepcopy(prices)
+        else:
+            _prices = [copy.deepcopy(px) for px in prices]
+                
+        # Rotate scenario
+        table = LWDBPricingTable()
+        table.base_scenario = 'LW_SEC_PRICING'
+        for px in _prices:
+            # We want to rotate for each source and security combo separately.
+            # By doing this, if there are other securities for a given source, they will remain intact,
+            # rather than having their scenario rotated when there is no new row to take their place as the base scenario.
+            
+            # Add LW_ prefix if manual/override:
+            logging.info(f'Mid LWDB create 1: {prices}')
+            if px.source.name in ('MANUAL', 'OVERRIDE'):
+                px.source = PriceSource('LW_' + px.source.name)
+            logging.info(f'Mid LWDB create 2: {prices}')
+            extra_where = and_(
+                table.table_def.c.source == px.source.name,
+                table.table_def.c.lw_id == px.security.lw_id
+            )
+
+            # Now rotate
+            table.rotate(data_date=px.data_date, extra_where=extra_where
+                    , commit=AppConfig().parser.get('app', 'commit', fallback=False))
+
+        # Build master list of dicts to populate the DataFrame later for the insert
+        prices_dicts = [px.to_dict() for px in _prices]
+
+        # Create df to bulk insert
+        prices_df = pd.DataFrame(data=prices_dicts)
+
+        # Add standard columns
+        prices_df['scenario'] = table.base_scenario
+        prices_df['scenariodate'] = prices_df['asofdate'] = datetime.datetime.now().isoformat()[:-3]
+        prices_df['asofuser'] = f"{os.getlogin()}_{socket.gethostname()}"
+
+        # Translate to match table column names
+        if 'data_date' in prices_df.columns and 'data_dt' not in prices_df.columns:
+            prices_df['data_dt'] = prices_df['data_date']
+            prices_df = prices_df.drop(['data_date'], axis=1)
+        if 'duration' in prices_df.columns and 'moddur' not in prices_df.columns:
+            prices_df['moddur'] = prices_df['duration']
+            prices_df = prices_df.drop(['duration'], axis=1)
+
+        # Drop these since they DNE in pricing table
+        if 'modified_at' in prices_df.columns:
+            prices_df = prices_df.drop(['modified_at'], axis=1)
+        # Bulk insert new rows:
+        logging.debug(f"About to insert {prices_df}")
+        res = table.bulk_insert(prices_df)  # TODO: error handling?
+        if isinstance(res, int):
+            row_cnt = res
+        else:
+            row_cnt = res.rowcount
+        if row_cnt != len(_prices):
+            raise UnexpectedRowCountException(f"Expected {len(_prices)} rows to be saved, but there were {row_cnt}!")
+        logging.info(f'End of LWDB create: {prices}')
+        return row_cnt
+
+    def get(self, data_date: datetime.date, source: Union[PriceSource,None]=None
+            , security: Union[Security,None]=None) -> List[Price]:
+        pass
 
 
 class CoreDBPriceBatchRepository(PriceBatchRepository):

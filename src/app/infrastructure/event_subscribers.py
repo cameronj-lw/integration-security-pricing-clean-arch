@@ -78,7 +78,7 @@ class KafkaEventConsumer(EventSubscriber):
                     logging.info(f"Done handling {event}")
                     # self.consumer.commit(message=msg, asynchronous=False)
                     # logging.info("Done committing offset")
-                time.sleep(5)
+                # time.sleep(1)
         except KeyboardInterrupt:
             pass
         finally:
@@ -127,6 +127,13 @@ class KafkaCoreDBSecurityCreatedEventConsumer(KafkaEventConsumer):
         event_dict = json.loads(message_value.decode('utf-8'))
         lw_id = event_dict['lw_id']
         attributes = {k:event_dict[k] for k in event_dict if k != 'lw_id'}
+
+        # Message could contain a modified_at, in seconds since epoch
+        if 'modified_at' in attributes:
+            if isinstance(attributes['modified_at'], int):
+                attributes['modified_at'] = datetime.datetime.fromtimestamp(attributes['modified_at'] / 1000.0)
+            attributes['modified_at'] = attributes['modified_at'].isoformat()
+
         sec = Security(lw_id=lw_id, attributes=attributes)
         event = self.event_class(sec)
         return event
@@ -149,7 +156,7 @@ class KafkaCoreDBAppraisalBatchCreatedEventConsumer(KafkaEventConsumer):
         
         # Convert "days since epoch" to date
         date = (datetime.datetime(year=1970, month=1, day=1) + datetime.timedelta(days=event_dict['data_date'])).date()
-        
+
         # Create batch, then event and return it
         batch = AppraisalBatch(portfolios=event_dict['portfolios'], data_date=date)
         event = self.event_class(batch)

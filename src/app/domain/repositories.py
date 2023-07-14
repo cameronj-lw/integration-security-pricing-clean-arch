@@ -34,7 +34,7 @@ class SecuritiesForDateRepository(ABC):
 
 class PriceRepository(ABC):
     @abstractmethod
-    def create(self, price: Price) -> Price:
+    def create(self, prices: Union[List[Price], Price]) -> Union[List[Price], Price]:
         pass
 
     @abstractmethod

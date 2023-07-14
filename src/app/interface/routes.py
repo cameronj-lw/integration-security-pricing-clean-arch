@@ -129,19 +129,36 @@ class PricingAttachmentByDate(Resource):
 
 @api.route('/api/pricing/held-security-price')
 class HeldSecurityWithPrices(Resource):
+    formatter = DefaultRESTFormatter()
+
     def post(self):
         # Note this is not really a standard "post" as it does not save data - but is created as such 
         # because we want to accept optional params in the payload rather than the URL, and 
         # some clients such as AngularJS cannot do so for a GET request.
         payload = api.payload
-        return  # TODO: implement
+        try:
+            # Get query handler, based on app config
+            query_handler = current_app.config['held_security_price_query_handler']
+
+            # Get counts
+            result_data = query_handler.handle(payload)
+
+            return self.formatter.success_get(result_data)
+        except Exception as e:
+            return self.formatter.exception(e)
 
 @api.route('/api/pricing/price')
 class PriceByIMEX(Resource):
+    formatter = DefaultRESTFormatter()
     
     def post(self):
         payload = api.payload
-        return  # TODO: implement
+        try:
+            command_handler = current_app.config['price_by_imex_command_handler']
+            row_cnt = command_handler.handle_post(payload)
+            return self.formatter.success_post(row_cnt)
+        except Exception as e:
+            return self.formatter.exception(e)
 
 @api.route('/api/pricing/manual-pricing-security')
 class ManualPricingSecurity(Resource):
@@ -234,11 +251,22 @@ class PricingColumnConfig(Resource):
             return self.formatter.exception(e)
     
 @api.route('/api/pricing/count-by-source')
-class PriceCountBySource(Resource):  # TODO_WAVE4: implement
+class PriceCountBySource(Resource):
+    formatter = DefaultRESTFormatter()
+
     def post(self):
         # Note this is not really a standard "post" as it does not save data - but is created as such 
         # because we want to accept optional params in the payload rather than the URL, and 
         # some clients such as AngularJS cannot do so for a GET request.
         payload = api.payload
-        return  # TODO: implement
+        try:
+            # Get query handler, based on app config
+            query_handler = current_app.config['counts_by_source_query_handler']
+
+            # Get counts
+            result_data = query_handler.handle(payload)
+
+            return self.formatter.success_get(result_data)
+        except Exception as e:
+            return self.formatter.exception(e)
 
