@@ -4,6 +4,9 @@ import logging
 from typing import List, Optional, Union, Tuple
 
 class DefaultRESTFormatter:
+    # TODO: Create a multi-repo post formatter, e.g. for PriceByIMEX, 
+    # to provide a full summary of inserts to mutliple repo's
+
     def success_get(self, data: Union[dict, list]) -> Tuple[dict, int]:
         return {
             'data': data,

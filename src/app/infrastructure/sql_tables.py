@@ -1,8 +1,8 @@
 
 
-
+import logging
 import sqlalchemy
-from sqlalchemy import sql
+from sqlalchemy import sql, bindparam
 
 from app.infrastructure.util.table import BaseTable, ScenarioTable
 
@@ -39,6 +39,30 @@ class APXDBvPriceTable(BaseTable):
 """
 COREDB
 """
+
+class CoreDBPriceAuditEntryTable(BaseTable):
+	config_section = 'coredb'
+	schema = 'pricing'
+	table_name = 'audit_trail'
+
+	def read(self, data_date=None, security=None):
+		"""
+		Read all entries, optionally for date/security
+
+		:param data_date (datetime.date): price date for the audit trail to get.
+		:param security (Security): security to get audit trail for.
+		:return: DataFrame
+		"""		
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		if security is not None:
+			stmt = stmt.where(self.c.lw_id == security.lw_id)
+		if data_date is not None:
+			stmt = stmt.where(self.c.data_date == data_date)
+		return self.execute_read(stmt)
 
 class CoreDBManualPricingSecurityTable(BaseTable):
 	config_section = 'coredb'
@@ -93,7 +117,7 @@ class CoreDBvwPriceView(BaseTable):
 
 	def read(self, data_date=None, source_name=None, lw_id=None):
 		"""
-		Read all entries
+		Read all entries, optionally filtering by date/source/lw_id(s)
 
 		:return: DataFrame
 		"""
@@ -107,7 +131,10 @@ class CoreDBvwPriceView(BaseTable):
 		if source_name is not None:
 			stmt = stmt.where(self.c.source == source_name)
 		if lw_id is not None:
-			stmt = stmt.where(self.c.lw_id == lw_id)
+			if isinstance(lw_id, str):
+				stmt = stmt.where(self.c.lw_id == lw_id)
+			elif isinstance(lw_id, list):
+				stmt = stmt.where(self.c.lw_id.in_(lw_id))
 		return self.execute_read(stmt)
 
 
@@ -117,7 +144,7 @@ class CoreDBvwSecurityView(BaseTable):
 
 	def read(self, lw_id=None):
 		"""
-		Read all entries
+		Read all entries, optionally for specific lw_id(s)
 
 		:return: DataFrame
 		"""
@@ -127,7 +154,10 @@ class CoreDBvwSecurityView(BaseTable):
 		else:
 			stmt = sql.select([self.table_def])
 		if lw_id is not None:
-			stmt = stmt.where(self.c.lw_id == lw_id)
+			if isinstance(lw_id, str):
+				stmt = stmt.where(self.c.lw_id == lw_id)
+			elif isinstance(lw_id, list):
+				stmt = stmt.where(self.c.lw_id.in_(lw_id))
 		return self.execute_read(stmt)
 
 

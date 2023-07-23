@@ -160,49 +160,50 @@ class JSONHeldSecuritiesWithPricesRepository(SecuritiesWithPricesRepository):
         return securities_with_prices
 
 
-class JSONSecurityRepository(SecurityRepository):
-    read_model_name = 'security'
+# TODO_CLEANUP: remove when not needed
+# class JSONSecurityRepository(SecurityRepository):
+#     read_model_name = 'security'
 
-    def create(self, security: Security):
-        # Get dict
-        sec_dict = security.to_dict()
-        json_content = json.dumps(sec_dict, indent=4, default=str)
+#     def create(self, security: Security):
+#         # Get dict
+#         sec_dict = security.to_dict()
+#         json_content = json.dumps(sec_dict, indent=4, default=str)
         
-        # Save to file
-        set_read_model_content(read_model_name=self.read_model_name, file_name=self.file_name, content=json_content, data_date=data_date)
+#         # Save to file
+#         set_read_model_content(read_model_name=self.read_model_name, file_name=self.file_name, content=json_content, data_date=data_date)
         
-        # Confirm it was successfully created. If not, throw exception.
-        get_res = self.get(security)
-        if get_res is None:
-            raise CreateFailedException(f"Failed to add {security.lw_id} to JSON security repo")
-        else:
-            return get_res[0]
+#         # Confirm it was successfully created. If not, throw exception.
+#         get_res = self.get(security)
+#         if get_res is None:
+#             raise CreateFailedException(f"Failed to add {security.lw_id} to JSON security repo")
+#         else:
+#             return get_res[0]
 
-    def get(self, security: Union[Security, None] = None) -> List[Security]:
-        if security is not None:
-            # Retrieve only from the single file
-            sec_dict = get_read_model_content(read_model_name=self.read_model_name, file_name=f'{security.lw_id}.json')
-            if sec_dict is None:
-                return None  # DNE yet
-            else:
-                sec = Security.from_dict(sec_dict)
-                return [sec]
-        else:
-            # Retrieve all for the date
-            res = []
-            target_dir = get_read_model_folder(read_model_name=self.read_model_name)
-            for dirpath, _, filenames in os.walk(target_dir):
-                # Ignore subfolders
-                if dirpath != target_dir:
-                    continue
+#     def get(self, security: Union[Security, None] = None) -> List[Security]:
+#         if security is not None:
+#             # Retrieve only from the single file
+#             sec_dict = get_read_model_content(read_model_name=self.read_model_name, file_name=f'{security.lw_id}.json')
+#             if sec_dict is None:
+#                 return None  # DNE yet
+#             else:
+#                 sec = Security.from_dict(sec_dict)
+#                 return [sec]
+#         else:
+#             # Retrieve all for the date
+#             res = []
+#             target_dir = get_read_model_folder(read_model_name=self.read_model_name)
+#             for dirpath, _, filenames in os.walk(target_dir):
+#                 # Ignore subfolders
+#                 if dirpath != target_dir:
+#                     continue
                 
-                for filename in filenames:
-                    with open(filename, 'r') as f:
-                        sec_dict = json.loads(f.read())
-                        sec = Security.from_dict(sec_dict)
-                    if sec is not None:
-                        res.append(sec)
-            return res
+#                 for filename in filenames:
+#                     with open(filename, 'r') as f:
+#                         sec_dict = json.loads(f.read())
+#                         sec = Security.from_dict(sec_dict)
+#                     if sec is not None:
+#                         res.append(sec)
+#             return res
 
 
 class JSONSecurityWithPricesRepository(SecurityWithPricesRepository):
@@ -310,7 +311,7 @@ class JSONSecurityWithPricesRepository(SecurityWithPricesRepository):
             if swp_dict is None:
                 return None  # DNE yet
             else:
-                logging.info(f'Creating SWP from dict: {swp_dict}')
+                logging.debug(f'Creating SWP from dict: {swp_dict}')
                 swp = SecurityWithPrices.from_dict(swp_dict)
                 logging.debug(f'Created {swp}')
                 return [swp]

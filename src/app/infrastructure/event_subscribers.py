@@ -76,8 +76,8 @@ class KafkaEventConsumer(EventSubscriber):
                     logging.info(f"Handling {event}")
                     self.event_handler.handle(event)  
                     logging.info(f"Done handling {event}")
-                    # self.consumer.commit(message=msg, asynchronous=False)
-                    # logging.info("Done committing offset")
+                    self.consumer.commit(message=msg, asynchronous=False)
+                    logging.info("Done committing offset")
                 # time.sleep(1)
         except KeyboardInterrupt:
             pass
@@ -134,8 +134,11 @@ class KafkaCoreDBSecurityCreatedEventConsumer(KafkaEventConsumer):
                 attributes['modified_at'] = datetime.datetime.fromtimestamp(attributes['modified_at'] / 1000.0)
             attributes['modified_at'] = attributes['modified_at'].isoformat()
 
+        logging.debug(f'KafkaCoreDBSecurityCreatedEventConsumer lw_id: {lw_id} type {type(lw_id)}')
         sec = Security(lw_id=lw_id, attributes=attributes)
+        logging.debug(f'KafkaCoreDBSecurityCreatedEventConsumer sec: {sec} type {type(sec)}')
         event = self.event_class(sec)
+        logging.debug(f'KafkaCoreDBSecurityCreatedEventConsumer event: {event} type {type(event)}')
         return event
 
 

@@ -18,7 +18,7 @@ class SecurityRepository(ABC):
         pass
 
     @abstractmethod
-    def get(self, lw_id: Union[str,None] = None) -> List[Security]:
+    def get(self, lw_id: Union[List[str],str,None] = None) -> List[Security]:
         pass
 
 
@@ -39,7 +39,7 @@ class PriceRepository(ABC):
 
     @abstractmethod
     def get(self, data_date: datetime.date, source: Union[PriceSource,None]=None
-            , security: Union[Security,None]=None) -> List[Price]:
+            , security: Union[List[Security],Security,None]=None) -> List[Price]:
         pass
 
 

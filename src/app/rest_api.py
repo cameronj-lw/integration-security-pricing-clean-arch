@@ -7,6 +7,10 @@ import logging
 import os
 import sys
 
+# Append to pythonpath
+src_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(src_dir)
+
 # pypi
 from flask import Flask
 
@@ -15,7 +19,7 @@ from application.query_handlers import (
     PriceFeedWithStatusQueryHandler, PriceAuditReasonQueryHandler,
     ManualPricingSecurityQueryHandler, UserWithColumnConfigQueryHandler,
     PricingAttachmentByDateQueryHandler, PriceCountBySourceQueryHandler,
-    HeldSecurityPriceQueryHandler
+    HeldSecurityPriceQueryHandler, PriceAuditEntryQueryHandler
 )
 from application.command_handlers import (
     SecurityCommandHandler, 
@@ -24,7 +28,8 @@ from application.command_handlers import (
 )
 from infrastructure.sql_repositories import (
     MGMTDBPriceFeedWithStatusRepository, CoreDBManualPricingSecurityRepository,
-    CoreDBColumnConfigRepository, CoreDBSecurityRepository, LWDBPriceRepository
+    CoreDBColumnConfigRepository, CoreDBSecurityRepository, LWDBPriceRepository,
+    CoreDBPriceAuditEntryRepository
 )
 from infrastructure.file_repositories import (
     DataDirDateWithPricingAttachmentsRepository, JSONHeldSecuritiesWithPricesRepository
@@ -53,6 +58,8 @@ pricing_attachment_by_date_query_handler = PricingAttachmentByDateQueryHandler(D
 counts_by_source_query_handler = PriceCountBySourceQueryHandler(JSONHeldSecuritiesWithPricesRepository())
 held_security_price_query_handler = HeldSecurityPriceQueryHandler(JSONHeldSecuritiesWithPricesRepository())
 price_by_imex_command_handler = PriceByIMEXCommandHandler(CoreDBSecurityRepository(), [LWDBPriceRepository(), APXPriceRepository()])
+# TODO_GOLIVE: add Price repo to above for manual_price table
+audit_trail_query_handler = PriceAuditEntryQueryHandler(CoreDBPriceAuditEntryRepository())
 
 # Inject dependencies into the Flask app context
 app.config['feed_status_query_handler'] = price_feed_with_status_query_handler
@@ -66,6 +73,7 @@ app.config['pricing_attachment_by_date_query_handler'] = pricing_attachment_by_d
 app.config['counts_by_source_query_handler'] = counts_by_source_query_handler
 app.config['held_security_price_query_handler'] = held_security_price_query_handler
 app.config['price_by_imex_command_handler'] = price_by_imex_command_handler
+app.config['audit_trail_query_handler'] = audit_trail_query_handler
 # app.config['price_feed_service'] = price_feed_service
 
 # Register the blueprint with the app, passing the app's config

@@ -20,32 +20,80 @@ from app.domain.models import (
 from app.domain.repositories import (
     PriceRepository, SecurityRepository, SecurityWithPricesRepository,
     SecuritiesWithPricesRepository, PositionRepository,
-    SecuritiesForDateRepository
+    SecuritiesForDateRepository, PriceAuditEntryRepository
 )
 # TODO_DEPENDENCY: do dependency injection instead - app layer should not depend on infra layer
 from app.infrastructure.util.config import AppConfig  
-from app.infrastructure.util.date import get_next_bday
+from app.infrastructure.util.date import get_next_bday, get_previous_bday
+from app.infrastructure.file_repositories import JSONHeldSecuritiesRepository
 
 
 
 @dataclass
 class SecurityCreatedEventHandler(EventHandler):
-    # We'll update the below repos with the new Security info
+    # We'll pull prices for the new/updated security from the following repo
+    price_repository: PriceRepository
+
+    # We'll then update the below repos with the new Security info
     security_with_prices_repository: SecurityWithPricesRepository
     held_securities_with_prices_repository: SecuritiesWithPricesRepository
 
     def handle(self, event: SecurityCreatedEvent):
         """ Handle the event """
-        security = event.security
+        sec = event.security
+        logging.debug(f'SecurityCreatedEventHandler event: {event} type {type(event)}')
+        logging.debug(f'SecurityCreatedEventHandler sec: {sec} type {type(sec)}')
         
         # Some have difficult lw_id's ... these ones are not held anyway, so do not need to be included
-        if '/' in security.lw_id:
+        if '/' in sec.lw_id:
             return
+
+        # TODO_DEBUG: remove (timesaver)
+        held_secs = JSONHeldSecuritiesRepository().get(data_date=datetime.date.today())
+        if sec.lw_id not in [s.lw_id for s in held_secs]:
+            return  # skip if not held
 
         # Perform actions in response to SecurityCreatedEvent
         for d in self.get_dates_to_update():
-            self.security_with_prices_repository.add_security(data_date=d, security=security)
-            self.held_securities_with_prices_repository.refresh_for_securities(data_date=d, securities=[security])
+            # Get prev and curr bday prices
+            curr_bday_prices = self.price_repository.get(data_date=d, security=sec)
+            prev_bday_prices = self.price_repository.get(data_date=get_previous_bday(d), security=sec, source=PriceSource('PXAPX'))
+            
+            # Filter to only those relevant, for curr bday
+            curr_bday_prices = [px for px in curr_bday_prices if self.feed_is_relevant(px.source)]
+
+            # TODO: get audit trail
+
+            # Create SWP
+            swp = SecurityWithPrices(
+                security=sec, data_date=d
+                , curr_bday_prices=curr_bday_prices
+                , prev_bday_price=prev_bday_prices[0] if len(prev_bday_prices) else None
+                # TODO: add audit trail
+            )
+
+            # Save to SecurityWithPrices repo
+            self.security_with_prices_repository.create(swp)
+            
+            # Refresh HeldSecuritiesWithPrices repo
+            self.held_securities_with_prices_repository.refresh_for_securities(data_date=d, securities=[sec])
+
+    # TODO_REFACTOR: should this be a generic function rather than belonging to class(es)?
+    def feed_is_relevant(self, source: PriceSource) -> bool:
+        """ Determine whether a pricing feed is relevant.
+        
+        Args:
+        - source (str): Name of the feed.
+
+        Returns:
+        - bool: True if the feed is relevant, else False.
+        """
+        relevant_price_source_names = (
+            AppConfig().parser.get('app', 'vendor_price_sources').split(',')
+            + AppConfig().parser.get('app', 'lw_price_sources').split(','))
+        relevant_price_source_names = [s.strip() for s in relevant_price_source_names]
+        # TODO: should relevant price sources be different than relevant pricing feeds in the config? 
+        return (source.name in relevant_price_source_names)
 
     def get_dates_to_update(self, num_days_back=7):
         """ Get a list of dates which we want to update in response to a new/changed security.
@@ -80,11 +128,84 @@ class SecurityCreatedEventHandler(EventHandler):
 @dataclass
 class PriceBatchCreatedEventHandler(EventHandler):
     price_repository: PriceRepository  # We'll query this to find the new prices
+    security_repository: SecurityRepository  # We'll query this to find the Security info
+    audit_trail_repository: PriceAuditEntryRepository  # We'll query this to find the audit trail
+
     # We'll then update the following 2 repositories
     security_with_prices_repository: SecurityWithPricesRepository
     held_securities_with_prices_repository: SecuritiesWithPricesRepository
 
     def handle(self, event: PriceBatchCreatedEvent):
+        price_batch = event.price_batch
+
+        # Check if source is relevant. If not, return as we don't want to process it.
+        # Also assign data_date here
+        translated_source = self.translate_price_source(price_batch.source)
+        if self.feed_is_relevant(translated_source):
+            data_date = price_batch.data_date
+        elif translated_source == 'APX':
+            data_date = get_next_bday(price_batch.data_date)
+        else:
+            return  # exit - source not relevant
+
+        # timesavers - TODO_DEBUG: remove these
+        if data_date < datetime.date(year=2023, month=7, day=17):
+            return  # TODO_DEBUG: remove (timesaver)            
+        if price_batch.source.name == 'TXPR':
+            return  # TODO_DEBUG: remove ... time saver
+
+        # Get lw_id's from Price repo -> Get Securities from Security repo
+        new_prices = self.price_repository.get(
+            data_date=price_batch.data_date, source=price_batch.source)
+        lw_ids = [px.security.lw_id for px in new_prices]
+        secs = self.security_repository.get(lw_id=lw_ids)
+
+        logging.info(f'Processing {len(new_prices)} {price_batch.data_date} prices from {price_batch.source}')
+
+        # Get all curr day and prev day prices, TODO: add curr bday audit trail
+        curr_bday_prices = self.price_repository.get(data_date=data_date, security=secs)
+        prev_bday_prices = self.price_repository.get(data_date=get_previous_bday(data_date), security=secs, source=PriceSource('PXAPX'))
+
+        # Get curr bday audit trail
+        curr_bday_audit_trail = self.audit_trail_repository.get(data_date=data_date)
+
+        # Combine them to build SecurityWithPrices objects
+        for sec in secs:
+            sec_curr_bday_prices = [px for px in curr_bday_prices if px.security.lw_id == sec.lw_id]
+
+            # Update source as translated source
+            for i, px in enumerate(sec_curr_bday_prices):
+                px.source = self.translate_price_source(px.source)
+                sec_curr_bday_prices[i] = px
+
+            # Filter to only those relevant
+            relevant_sec_curr_bday_prices = [px for px in sec_curr_bday_prices if self.feed_is_relevant(px.source)]
+            logging.debug(f'{sec.lw_id}: {len(sec_curr_bday_prices)} prices -> {len(relevant_sec_curr_bday_prices)} relevant')
+
+            # Add prev bday APX prices
+            sec_prev_bday_prices = [px for px in prev_bday_prices if px.security.lw_id == sec.lw_id]
+
+            # Add audit trail
+            sec_audit_trail = [ae for ae in curr_bday_audit_trail if ae.security.lw_id == sec.lw_id]
+
+            # Create SWP
+            swp = SecurityWithPrices(
+                security=sec, data_date=data_date
+                , curr_bday_prices=relevant_sec_curr_bday_prices
+                , prev_bday_price=sec_prev_bday_prices[0] if len(sec_prev_bday_prices) else None
+                , audit_trail=sec_audit_trail
+            )
+            if sec_audit_trail is not None:
+                logging.info(f'Saving to SWP repo: {swp}')
+
+            # Save to SecurityWithPrices repo
+            self.security_with_prices_repository.create(swp)
+
+        # Finally, refresh HeldSecuritiesWithPrices repo
+        self.held_securities_with_prices_repository.refresh_for_securities(data_date, secs)
+
+
+    def handle_old(self, event: PriceBatchCreatedEvent):
         price_batch = event.price_batch
 
         # Get the individual prices from the repo
@@ -131,6 +252,7 @@ class PriceBatchCreatedEventHandler(EventHandler):
         self.held_securities_with_prices_repository.refresh_for_securities(data_date=data_date, securities=[px.security for px in new_prices])
         # TODO: should commit consumer offset here?
 
+    # TODO_REFACTOR: should this be a generic function rather than belonging to class(es)?
     def feed_is_relevant(self, source: PriceSource) -> bool:
         """ Determine whether a pricing feed is relevant.
         
@@ -188,8 +310,8 @@ class AppraisalBatchCreatedEventHandler(EventHandler):
         appraisal_batch = event.appraisal_batch
 
         # TODO_DEBUG: remove (timesaver)
-        # if appraisal_batch.data_date != datetime.date(year=2023, month=7, day=6):
-        #     return
+        if appraisal_batch.data_date != datetime.date(year=2023, month=7, day=17):
+            return
 
         next_bday = get_next_bday(appraisal_batch.data_date)
         # Perform actions in response to AppraisalBatchCreatedEvent
@@ -210,6 +332,6 @@ class AppraisalBatchCreatedEventHandler(EventHandler):
             self.held_securities_repository.create(data_date=next_bday, securities=held_secs)
 
         # Update master RM, removing securities which are not in the Appraisal result because they are not held
-        self.held_securities_with_prices_repository.refresh_for_securities(data_date=appraisal_batch.data_date, securities=held_secs, remove_other_secs=True)
+        # self.held_securities_with_prices_repository.refresh_for_securities(data_date=appraisal_batch.data_date, securities=held_secs, remove_other_secs=True)
 
 

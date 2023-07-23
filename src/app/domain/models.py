@@ -3,7 +3,16 @@
 from dataclasses import dataclass, field
 import datetime
 import logging  # TODO_CLEANUP: remove when not needed ... domain layer shouldn't do logging
+import math
 from typing import List, Type, Union
+
+
+# pypi
+import numpy as np
+
+
+class InvalidDictError(Exception):
+    pass
 
 
 @dataclass
@@ -47,7 +56,21 @@ class PriceType:
 @dataclass 
 class Security:
     lw_id: str
-    attributes: dict = field(default_factory=dict)  # TODO: should this class require specific attributes?
+    attributes: dict = field(default_factory=dict)  
+    # TODO: should this class require specific attributes? 
+    # Or should there be multiple dicts for different types of attributes? 
+    # e.g. Market IDs, classifications, LW-specific, other, ...
+
+    def __post_init__(self):      
+        # Replace np.nan and similar attributes with None.
+        # This helps avoid issues when JSON (de)serializing "NaN"
+        for (k,v) in self.attributes.items():
+            try:
+                if math.isnan(v):
+                    new_dict_item = {k: None}
+                    self.attributes.update(new_dict_item)
+            except TypeError as e:
+                continue  # e.g. "must be real number, not str"
 
     def to_dict(self):
         """ Export an instance to dict format """
@@ -94,13 +117,30 @@ class Security:
             sec_types = [sec_type]
         
         # Get this Security's sec type and compare
-        return self.get_sec_type()[:2] in sec_types
+        sec_sec_type = self.get_sec_type()
+        if isinstance(sec_sec_type, str):
+            return self.get_sec_type()[:2] in sec_types
+        else:
+            return False
 
 
 @dataclass
 class PriceValue:
     type_: PriceType
     value: float
+
+    # Value may be NaN... if so, replace with None here:
+    # TODO_LAYERS: this creates a dependency from domain layer to numpy ... may belong somewhere else
+    def __post_init__(self):
+        if self.value is not None:
+            # Replace np.nan and similar values with None.
+            # This helps avoid issues when JSON (de)serializing "NaN"
+            if math.isnan(self.value):
+                self.value = None
+            else:
+                # The value may be of type Decimal, e.g. if originating from a sqlalchemy query.
+                # This can cause issues such as when JSON serializing. Convert to standard float to avoid such issues:
+                self.value = float(self.value)
 
 
 @dataclass
@@ -119,7 +159,16 @@ class Price:
             , 'modified_at': self.modified_at.isoformat()
             # , self.type_.name: self.value
         }
+
+        # Get values - separating as it's a bit involved:
         values = {pv.type_.name: pv.value for pv in self.values}
+
+        # There may be "xyz_bid" values. If so, we also want to incldue those as "xyz" if "xyz" DNE.
+        # TODO: revisit whether this is necessary?
+        bid_items_dict = {k[:-4]:v for k,v in values.items() if k[-4:] == '_bid' and k[:-4] not in values}
+        values.update(bid_items_dict)
+
+        # Add values to dict and return
         res.update(values)
         return res
 
@@ -176,16 +225,40 @@ class PriceAuditEntry:
 
     @classmethod
     def from_dict(cls, data: dict):
+        # TODO: validations on the data? e.g. one price per PriceType in each before & after?
+        logging.info(f'Trying to create PriceAuditEntry from {data}')
         try:
+            sec = Security(lw_id=data["lw_id"])
+            data_date = datetime.date.fromisoformat(data["data_date"])
+            modified_by=data["modified_by"] if 'modified_by' in data else data["asofuser"]
+            modified_at = datetime.datetime.fromisoformat(
+                    data["modified_at"] if 'modified_at' in data 
+                    else datetime.datetime.fromisoformat(data["asofdate"])
+            )
+
+            # Get price values - assumption is that "before" and "after" each contain a "source", 
+            # and all other numeric items in that dict represent Price Values
+            before_price_values = [PriceValue(PriceType(k), v) for k,v in data['before'].items()
+                    if not isinstance(v, str)] 
+            after_price_values = [PriceValue(PriceType(k), v) for k,v in data['after'].items()
+                    if not isinstance(v, str)] 
+            
+            # Create prices for before & after
+            before_price = Price(security=sec, source=PriceSource(data['before']['source'])
+                    , data_date=data_date, modified_at=modified_at, values=before_price_values)
+            after_price = Price(security=sec, source=PriceSource(data['after']['source'])
+                    , data_date=data_date, modified_at=modified_at, values=after_price_values)
+
+            # Create & return class instance
             return cls(
-                data_date=datetime.date.fromisoformat(data["data_date"]),
-                security=Security(lw_id=data["lw_id"]),
+                data_date=data_date,
+                security=sec,
                 reason=data["reason"],
                 comment=data["comment"],
-                before=Price.from_dict(data["before"]),
-                after=Price.from_dict(data["after"]),
-                modified_by=data["modified_by"] if 'modified_by' in data else data["asofuser"],
-                modified_at=datetime.datetime.fromisoformat(data["modified_at"] if 'modified_at' in data else data["asofdate"]),
+                before=before_price,
+                after=after_price,
+                modified_by=modified_by,
+                modified_at=modified_at
             )
         except (KeyError, AttributeError) as e:
             logging.exception(e)
@@ -227,6 +300,7 @@ class SecurityWithPrices:
     @classmethod
     def from_dict(cls, data: dict):
         """ Create an instance from dict """
+        logging.debug(f'Creating SecurityWithPrices from dict {data}')
         try:
             security_attributes = {k: v for k,v in data.items()
                     if k not in ('lw_id', 'data_date', 'prices', 'curr_bday_prices', 'prev_bday_price', 'audit_trail', 'chosen_price')}
@@ -256,8 +330,10 @@ class SecurityWithPrices:
             if None in (security, data_date):
                 return None  # If not all required attributes are provided, cannot create the instance
             return cls(security, data_date, curr_bday_prices, prev_bday_price, audit_trail)
-        except (KeyError, AttributeError):
-            return None  # If not all required attributes are provided, cannot create the instance
+        except (KeyError, AttributeError) as e:
+            # If not all required attributes are provided, cannot create the instance
+            raise InvalidDictError(e)  # To be caught by callers
+            return None  
 
 
 @dataclass

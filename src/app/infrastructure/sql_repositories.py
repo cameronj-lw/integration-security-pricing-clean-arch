@@ -8,6 +8,7 @@ import socket
 from typing import List, Optional, Tuple, Union
 
 # pypi
+import numpy as np
 import pandas as pd
 from sqlalchemy import exc, update, and_
 
@@ -17,7 +18,7 @@ from app.application.repositories import UserWithColumnConfigRepository
 from app.domain.models import (
     Price, Security, PriceAuditEntry, PriceBatch
     , PriceFeed, PriceFeedWithStatus, PriceSource, PriceType
-    , Position
+    , Position, PriceValue
 )
 from app.domain.repositories import (
     SecurityRepository, PriceRepository, PriceBatchRepository
@@ -29,7 +30,7 @@ from app.infrastructure.sql_models import (
     MGMTDBPriceFeed, MGMTDBPriceFeedWithStatus
 )
 from app.infrastructure.sql_tables import (
-    CoreDBManualPricingSecurityTable, CoreDBColumnConfigTable
+    CoreDBManualPricingSecurityTable, CoreDBColumnConfigTable, CoreDBPriceAuditEntryTable
     , CoreDBvwPriceView, CoreDBvwSecurityView, CoreDBvwPriceBatchView
     , LWDBAPXAppraisalTable, LWDBPricingTable
 )
@@ -46,8 +47,15 @@ class CoreDBSecurityRepository(SecurityRepository):
     def create(self, security: Security) -> Security:
         pass  # TODO: implement
 
-    def get(self, lw_id: Union[str,None] = None) -> List[Security]:
-        query_result = CoreDBvwSecurityView().read(lw_id=lw_id)
+    def get(self, lw_id: Union[List[str],str,None] = None) -> List[Security]:
+        query_result = CoreDBvwSecurityView().read()
+        
+        # Trim to securities, if applicable
+        if isinstance(lw_id, str):
+            query_result = query_result[query_result['lw_id'].equals(lw_id)]
+        elif isinstance(lw_id, list):
+            query_result = query_result[query_result['lw_id'].isin(lw_id)]
+
         # query result should be a DataFrame. Need to convert to list of Securities:
         secs = [Security(sec['lw_id'], sec) for sec in query_result.to_dict('records')]
         return secs
@@ -147,9 +155,16 @@ class CoreDBPriceRepository(PriceRepository):
         pass
 
     def get(self, data_date: datetime.date, source: Union[PriceSource,None]=None
-            , security: Union[Security,None]=None) -> List[Price]:
-        query_result = CoreDBvwPriceView().read(data_date=data_date, source_name=(None if source is None else source.name)
-                , lw_id=(security.lw_id if security is not None else None))
+            , security: Union[List[Security],Security,None]=None) -> List[Price]:
+        query_result = CoreDBvwPriceView().read(data_date=data_date, source_name=(None if source is None else source.name))
+
+        # Trim to securities, if applicable
+        if isinstance(security, Security):
+            query_result = query_result[query_result['lw_id'].equals(security.lw_id)]
+        elif isinstance(security, list):
+            lw_ids = [sec.lw_id for sec in security]
+            query_result = query_result[query_result['lw_id'].isin(lw_ids)]
+
         query_result_dicts = query_result.to_dict('records')
 
         res = []
@@ -163,7 +178,7 @@ class CoreDBPriceRepository(PriceRepository):
             for k in ('price', 'yield', 'duration'):
                 if k not in price_dict:
                     continue
-                values[k] = qr[k]
+                values[k] = None if qr[k] in (None, np.nan) else qr[k]
                 del qr[k]
             price_dict['values'] = values
 
@@ -349,8 +364,45 @@ class CoreDBPriceAuditEntryRepository(PriceAuditEntryRepository):
     def create(self, price_audit_entry: PriceAuditEntry) -> PriceAuditEntry:
         pass
 
-    def get(self, data_date: datetime.date, security: Security) -> List[PriceAuditEntry]:
-        pass
+    def get(self, data_date: Union[datetime.date,None]=None, security: Union[Security,None]=None) -> List[PriceAuditEntry]:
+        query_result = CoreDBPriceAuditEntryTable().read(data_date, security)
+        audit_entries = []
+        for qr_dict in query_result.to_dict('records'):
+            # Build PriceAuditEntry from this row in query result
+
+            # Find keys of format "xyz_before" or "xyz_after", 
+            # where xyz is either "source" or the name of the PriceType:
+            before_fields_dict = {k:v for k,v in qr_dict.items() if k[-7:] == '_before'}
+            after_fields_dict = {k:v for k,v in qr_dict.items() if k[-6:] == '_after'}
+
+            # Get price sources - also remove them from dicts since they are the only field 
+            # not representing a price type (e.g. price/yield/duration)
+            before_source_name = before_fields_dict.pop('source_before')  # TODO: catch KeyError exception here?
+            after_source_name = after_fields_dict.pop('source_after')  # TODO: catch KeyError exception here?
+
+            # Create Prices for before & after, based on the discovered fields
+            before_price = Price(security=Security(qr_dict['lw_id']), 
+                    source=PriceSource(before_source_name),
+                    data_date=qr_dict['data_date'],
+                    modified_at=qr_dict['modified_at'],
+                    values=[PriceValue(PriceType(k[:-7]), v) for k,v in before_fields_dict.items()]
+            )
+            after_price = Price(security=Security(qr_dict['lw_id']), 
+                    source=PriceSource(after_source_name),
+                    data_date=qr_dict['data_date'],
+                    modified_at=qr_dict['modified_at'],
+                    values=[PriceValue(PriceType(k[:-6]), v) for k,v in after_fields_dict.items()]
+            )
+
+            # Create PriceAuditEntry instance and add to results
+            ae = PriceAuditEntry(data_date=qr_dict['data_date'], security=Security(qr_dict['lw_id']),
+                    reason=qr_dict['reason'], comment=qr_dict['comment'],
+                    before=before_price, after=after_price,
+                    modified_by=qr_dict['modified_by'], modified_at=qr_dict['modified_at']
+            )
+            audit_entries.append(ae)
+        logging.info(f'SQL repo returning {audit_entries}')
+        return audit_entries
 
 
 class CoreDBPriceSourceRepository(PriceSourceRepository):

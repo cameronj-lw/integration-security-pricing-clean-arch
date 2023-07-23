@@ -9,9 +9,10 @@ from typing import List, Optional
 # native
 from app.application.models import UserWithColumnConfig, DateWithPricingAttachments
 from app.application.repositories import UserWithColumnConfigRepository, DateWithPricingAttachmentsRepository
-from app.domain.models import PriceFeed, PriceFeedWithStatus, Security
+from app.domain.models import PriceFeed, PriceFeedWithStatus, Security, PriceAuditEntry
 from app.domain.repositories import (
     PriceFeedWithStatusRepository, SecurityRepository, SecuritiesWithPricesRepository
+    , PriceAuditEntryRepository
 )
 from app.infrastructure.util.config import AppConfig
 
@@ -51,6 +52,20 @@ class PriceAuditReasonQueryHandler:
             , {'reason': '#6 - New Issue'}
             , {'reason': '#7 - Other'}
         ]
+
+
+@dataclass
+class PriceAuditEntryQueryHandler:
+    repo: PriceAuditEntryRepository
+
+    def handle(self, data_date: str) -> List[PriceAuditEntry]:
+        """ Handle the query """
+        try:
+            date = datetime.datetime.strptime(data_date, '%Y%m%d').date()
+        except Exception as e:
+            # TODO: application error handling for invalid date?
+            pass  # exception should be caught by interface layer
+        return self.repo.get(date)
 
 
 @dataclass
@@ -104,12 +119,15 @@ class PriceCountBySourceQueryHandler:
         # Retrieve the held securities with prices from the repository
         held_secs_with_prices = self.repo.get(data_date=data_date)
 
+        # Remove any which are null
+        held_secs_with_prices = [swp for swp in held_secs_with_prices if swp is not None]
+
         # Now start building the dict  # TODO: does this logic belong in infra layer? 
         res = {}
         for swp in held_secs_with_prices:
             if sec_type is not None:
                 try:
-                    logging.info(f'Checking whether {swp} is sec type {sec_type}')
+                    logging.debug(f'Checking whether {swp} is sec type {sec_type}')
                     if not swp.security.is_sec_type(sec_type):
                         continue  # Skip, as it is not of requested sec type
                 except TypeError as e:
@@ -135,6 +153,7 @@ class HeldSecurityPriceQueryHandler:
 
     def handle(self, payload) -> dict:  # TODO: should this return a domain object rather than dict?
         """ Handle the query """
+        logging.info(f'HeldSecurityPrice payload: {payload}')
         # Populate defaults
         try:
             data_date = datetime.date.today() if 'price_date' not in payload else (
@@ -166,5 +185,7 @@ class HeldSecurityPriceQueryHandler:
                     continue
             # If we reached here, the SWP should be included. Add it to results:
             res.append(swp.to_dict())
+        
+        logging.info(f'HeldSecurityPrice returning {len(res)} rows')
         return res
 

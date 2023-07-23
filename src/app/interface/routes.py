@@ -207,12 +207,30 @@ class PricingAuditTrail(Resource):
 
 @api.route('/api/pricing/audit-trail-v2/<string:price_date>')
 class PricingAuditTrailv2(Resource):
+    formatter = DefaultRESTFormatter()
+
     def post(self, price_date):
         payload = api.payload
         return  # TODO: implement
 
     def get(self, price_date):
-        return  # TODO: implement
+        try:
+            # Get query handler, based on app config
+            query_handler = current_app.config['audit_trail_query_handler']
+
+            # Get audit entries
+            audit_entries = query_handler.handle(price_date)
+
+            # Need to format into list of dicts (desired format for result):
+            result_data = [ae.to_dict() for ae in audit_entries]
+
+            # Return standard format
+            logging.info(f'PricingAuditTrailv2 GET returning {result_data}')
+            return self.formatter.success_get(result_data)
+
+        except Exception as e:
+            return self.formatter.exception(e)
+
 
 @api.route('/api/pricing/column-config/<string:user_id>')
 class PricingColumnConfig(Resource):
@@ -231,10 +249,9 @@ class PricingColumnConfig(Resource):
         try:
             # Get query handler, based on app config
             query_handler = current_app.config['column_config_query_handler']
-            # Get feeds' statuses
-            user_with_column_config = query_handler.handle(user_id)  # query_handler.repo.get(data_date, feeds)
-            # manual_pricing_securities should be a list of Securities.
-            # Need to format into list (desired format for result):
+            # Get user's column configs
+            user_with_column_config = query_handler.handle(user_id) 
+            # Need to format into list if dicts (desired format for result):
             result_data = [{'user_id': user_id, 'column_name': cc.column_name, 'is_hidden': cc.is_hidden} for cc in user_with_column_config.column_configs]
             # Return standard format
             return self.formatter.success_get(result_data)
