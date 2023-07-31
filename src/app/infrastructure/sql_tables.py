@@ -36,6 +36,46 @@ class APXDBvPriceTable(BaseTable):
 		return self.execute_read(stmt)
 
 
+class APXDBvQbRowDefPositionView(BaseTable):
+	config_section = 'apxdb'
+	table_name = 'vQbRowDefPosition'
+	schema = 'dbo'
+
+	def read(self):
+		"""
+		Read all entries
+
+		:return: DataFrame
+		"""
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		return self.execute_read(stmt)
+
+
+class APXDBvPortfolioView(BaseTable):
+	config_section = 'apxdb'
+	table_name = 'vPortfolio'
+	schema = 'AdvApp'
+
+	def read(self, portfolio_id=None):
+		"""
+		Read all entries
+
+		:return: DataFrame
+		"""
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		if portfolio_id is not None:
+			stmt = stmt.where(self.c.PortfolioID == portfolio_id)
+		return self.execute_read(stmt)
+
+
 """
 COREDB
 """
@@ -142,7 +182,7 @@ class CoreDBvwSecurityView(BaseTable):
 	config_section = 'coredb'
 	table_name = 'vw-security'
 
-	def read(self, lw_id=None):
+	def read(self, lw_id=None, pms_security_id=None):
 		"""
 		Read all entries, optionally for specific lw_id(s)
 
@@ -158,6 +198,11 @@ class CoreDBvwSecurityView(BaseTable):
 				stmt = stmt.where(self.c.lw_id == lw_id)
 			elif isinstance(lw_id, list):
 				stmt = stmt.where(self.c.lw_id.in_(lw_id))
+		if pms_security_id is not None:
+			if isinstance(pms_security_id, int):
+				stmt = stmt.where(self.c.pms_security_id == pms_security_id)
+			elif isinstance(pms_security_id, list):
+				stmt = stmt.where(self.c.pms_security_id.in_(pms_security_id))
 		return self.execute_read(stmt)
 
 
@@ -181,6 +226,71 @@ class CoreDBvwPriceBatchView(BaseTable):
 			stmt = stmt.where(self.c.data_date == data_date)
 		if source_name is not None:
 			stmt = stmt.where(self.c.source == source_name)
+		return self.execute_read(stmt)
+
+
+class CoreDBvwHeldSecurityView(BaseTable):
+	config_section = 'coredb'
+	schema = 'dbo'
+	table_name = 'vw_held_security'
+
+	def read(self, data_date=None):
+		"""
+		Read all entries, optionally for data_date
+
+		:return: DataFrame
+		"""
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		if data_date is not None:
+			stmt = stmt.where(self.c.data_date == data_date)
+		return self.execute_read(stmt)
+
+
+class CoreDBvwHeldSecurityByDateView(BaseTable):
+	config_section = 'coredb'
+	schema = 'dbo'
+	table_name = 'vw_held_security_by_date'
+
+	def read(self, data_date=None):
+		"""
+		Read all entries, optionally for data_date
+
+		:return: DataFrame
+		"""
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		if data_date is not None:
+			stmt = stmt.where(self.c.data_date == data_date)
+		return self.execute_read(stmt)
+
+
+class CoreDBvwPortfolioView(BaseTable):
+	config_section = 'coredb'
+	schema = 'dbo'
+	table_name = 'vw_portfolio'
+
+	def read(self, portfolio_code=None, pms_portfolio_id=None):
+		"""
+		Read all entries, optionally for portfolio code and/or ID
+
+		:return: DataFrame
+		"""
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		if portfolio_code is not None:
+			stmt = stmt.where(self.c.portfolio_code == portfolio_code)
+		if pms_portfolio_id is not None:
+			stmt = stmt.where(self.c.pms_portfolio_id == pms_portfolio_id)
 		return self.execute_read(stmt)
 
 

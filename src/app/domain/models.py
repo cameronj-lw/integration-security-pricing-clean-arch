@@ -292,9 +292,11 @@ class SecurityWithPrices:
         res = self.security.to_dict()
         res['data_date'] = self.data_date.isoformat()
         res['curr_bday_prices'] = [] if self.curr_bday_prices is None else [px.to_dict() for px in self.curr_bday_prices]
-        res['chosen_price'] = {} if self.get_chosen_price() is None else self.get_chosen_price().to_dict()
+        chosen_price = self.get_chosen_price()
+        res['chosen_price'] = {} if chosen_price is None else chosen_price.to_dict()
         res['prev_bday_price'] = {} if self.prev_bday_price is None else self.prev_bday_price.to_dict()
         res['audit_trail'] = [] if self.audit_trail is None else [at.to_dict() for at in self.audit_trail]
+        logging.debug(f'Returning to_dict result:\n{self}\n{res}')
         return res
 
     @classmethod
@@ -368,6 +370,8 @@ class AppraisalBatch:
 @dataclass
 class Portfolio:
     portfolio_code: str
+    attributes: dict = field(default_factory=dict)  
+    # TODO: should this class require specific attributes? 
 
 
 @dataclass
@@ -375,7 +379,10 @@ class Position:
     portfolio: Portfolio
     data_date: datetime.date
     security: Security
-    prices: List[Price]  # TODO: only allow one price per price type?
+    quantity: float
+    is_short: bool=False
+    attributes: dict=field(default_factory=dict)  
+    # prices: List[Price]  # TODO: is this needed? If so, only allow one price per price type?
 
 
 @dataclass

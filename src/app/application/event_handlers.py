@@ -3,15 +3,18 @@
 from dataclasses import dataclass
 import datetime
 import logging
+from typing import Union
 
 # native
 from app.domain.event_handlers import EventHandler
+from app.domain.event_publishers import EventPublisher
 from app.domain.events import (
     SecurityCreatedEvent, PriceCreatedEvent, PriceBatchCreatedEvent,
     AppraisalBatchCreatedEvent,
     SecurityWithPricesCreatedEvent, PriceFeedCreatedEvent,
     PriceFeedWithStatusCreatedEvent, PriceAuditEntryCreatedEvent,
-    PriceSourceCreatedEvent, PriceTypeCreatedEvent
+    PriceSourceCreatedEvent, PriceTypeCreatedEvent,
+    PortfolioCreatedEvent, PositionCreatedEvent, PositionDeletedEvent
 )
 from app.domain.models import (
     Security, Price, SecurityWithPrices, PriceFeed,
@@ -25,14 +28,14 @@ from app.domain.repositories import (
 # TODO_DEPENDENCY: do dependency injection instead - app layer should not depend on infra layer
 from app.infrastructure.util.config import AppConfig  
 from app.infrastructure.util.date import get_next_bday, get_previous_bday
-from app.infrastructure.file_repositories import JSONHeldSecuritiesRepository
+from app.infrastructure.sql_repositories import CoreDBHeldSecurityRepository
 
 
 
 @dataclass
 class SecurityCreatedEventHandler(EventHandler):
-    # We'll pull prices for the new/updated security from the following repo
-    price_repository: PriceRepository
+    price_repository: PriceRepository  # We'll query this to find the sec's prices
+    audit_trail_repository: PriceAuditEntryRepository  # We'll query this to find the audit trail
 
     # We'll then update the below repos with the new Security info
     security_with_prices_repository: SecurityWithPricesRepository
@@ -46,12 +49,12 @@ class SecurityCreatedEventHandler(EventHandler):
         
         # Some have difficult lw_id's ... these ones are not held anyway, so do not need to be included
         if '/' in sec.lw_id:
-            return
+            return True  # commit offset 
 
         # TODO_DEBUG: remove (timesaver)
-        held_secs = JSONHeldSecuritiesRepository().get(data_date=datetime.date.today())
+        held_secs = CoreDBHeldSecurityRepository().get(data_date=datetime.date.today())
         if sec.lw_id not in [s.lw_id for s in held_secs]:
-            return  # skip if not held
+            return True  # commit offset  # skip if not held
 
         # Perform actions in response to SecurityCreatedEvent
         for d in self.get_dates_to_update():
@@ -62,14 +65,15 @@ class SecurityCreatedEventHandler(EventHandler):
             # Filter to only those relevant, for curr bday
             curr_bday_prices = [px for px in curr_bday_prices if self.feed_is_relevant(px.source)]
 
-            # TODO: get audit trail
+            # Get curr bday audit trail
+            curr_bday_audit_trail = self.audit_trail_repository.get(data_date=d)
 
             # Create SWP
             swp = SecurityWithPrices(
                 security=sec, data_date=d
                 , curr_bday_prices=curr_bday_prices
                 , prev_bday_price=prev_bday_prices[0] if len(prev_bday_prices) else None
-                # TODO: add audit trail
+                , audit_trail=curr_bday_audit_trail
             )
 
             # Save to SecurityWithPrices repo
@@ -143,22 +147,26 @@ class PriceBatchCreatedEventHandler(EventHandler):
         translated_source = self.translate_price_source(price_batch.source)
         if self.feed_is_relevant(translated_source):
             data_date = price_batch.data_date
-        elif translated_source == 'APX':
+        elif translated_source == PriceSource('APX'):
             data_date = get_next_bday(price_batch.data_date)
         else:
-            return  # exit - source not relevant
+            return True  # commit offset  # exit - source not relevant
 
         # timesavers - TODO_DEBUG: remove these
-        if data_date < datetime.date(year=2023, month=7, day=17):
-            return  # TODO_DEBUG: remove (timesaver)            
+        if data_date < datetime.date(year=2023, month=7, day=27):
+            return True  # commit offset  # TODO_DEBUG: remove (timesaver)            
         if price_batch.source.name == 'TXPR':
-            return  # TODO_DEBUG: remove ... time saver
+            return True  # commit offset  # TODO_DEBUG: remove ... time saver
 
         # Get lw_id's from Price repo -> Get Securities from Security repo
         new_prices = self.price_repository.get(
             data_date=price_batch.data_date, source=price_batch.source)
         lw_ids = [px.security.lw_id for px in new_prices]
         secs = self.security_repository.get(lw_id=lw_ids)
+
+        # Refresh for secs and return
+        self.held_securities_with_prices_repository.refresh_for_securities(data_date=data_date, securities=secs)
+        return True  # commit offset  # TODO_CLEANUP: remove below unreachable code? 
 
         logging.info(f'Processing {len(new_prices)} {price_batch.data_date} prices from {price_batch.source}')
 
@@ -218,10 +226,10 @@ class PriceBatchCreatedEventHandler(EventHandler):
         # return
 
         if data_date < datetime.date(year=2023, month=7, day=10):
-            return  # TODO_DEBUG: remove (timesaver)
+            return True  # commit offset  # TODO_DEBUG: remove (timesaver)
             
         if price_batch.source.name == 'TXPR':
-            return  # TODO_DEBUG: remove ... time saver
+            return True  # commit offset  # TODO_DEBUG: remove ... time saver
 
         translated_source = self.translate_price_source(price_batch.source)
 
@@ -247,10 +255,10 @@ class PriceBatchCreatedEventHandler(EventHandler):
                 self.security_with_prices_repository.add_price(price=px)
         else:
             # If we reached here, the feed is not relevant and we won't bother processing it
-            return  # TODO: should commit consumer offset here?
+            return True  # commit offset
         # now, refresh master read model:
         self.held_securities_with_prices_repository.refresh_for_securities(data_date=data_date, securities=[px.security for px in new_prices])
-        # TODO: should commit consumer offset here?
+        return True  # commit offset
 
     # TODO_REFACTOR: should this be a generic function rather than belonging to class(es)?
     def feed_is_relevant(self, source: PriceSource) -> bool:
@@ -310,6 +318,37 @@ class AppraisalBatchCreatedEventHandler(EventHandler):
         appraisal_batch = event.appraisal_batch
 
         # TODO_DEBUG: remove (timesaver)
+        if appraisal_batch.data_date < datetime.date(year=2023, month=7, day=26):
+            return True  # commit offset
+
+        # Perform actions in response to AppraisalBatchCreatedEvent
+        # TODO: inspect "portfolios" here, and ignore if not @LW_ALL_OpenAndMeasurement?
+        # positions = self.position_repository.get(data_date=appraisal_batch.data_date)
+        # next_bday = get_next_bday(appraisal_batch.data_date)
+        # held_secs = [pos.security for pos in positions]
+        # held_secs = set(held_secs)  # list(dict.fromkeys(held_secs))  # to remove dupes
+
+        # Get list of held secs
+        held_secs = self.position_repository.get_unique_securities(data_date=appraisal_batch.data_date)
+
+        # Update master RM, removing securities which are not in the Appraisal result because they are not held
+        logging.info(f'Refreshing HSWP repo for {appraisal_batch.data_date}')
+        self.held_securities_with_prices_repository.refresh_for_securities(data_date=appraisal_batch.data_date, securities=held_secs, remove_other_secs=True)
+        logging.info(f'Done refreshing HSWP repo for {appraisal_batch.data_date}')
+        
+        # Also refresh for next bday
+        next_bday = get_next_bday(appraisal_batch.data_date)
+        logging.info(f'Refreshing HSWP repo for {next_bday}')
+        self.held_securities_with_prices_repository.refresh_for_securities(data_date=next_bday, securities=held_secs, remove_other_secs=True)
+        logging.info(f'Done refreshing HSWP repo for {next_bday}')
+        return True  # commit offset
+
+    # TODO: remove below when not needed, i.e. once confirmed retiring the held_securities read model
+    def handle_old(self, event: AppraisalBatchCreatedEvent):
+        """ Handle the event """
+        appraisal_batch = event.appraisal_batch
+
+        # TODO_DEBUG: remove (timesaver)
         if appraisal_batch.data_date != datetime.date(year=2023, month=7, day=17):
             return
 
@@ -333,5 +372,43 @@ class AppraisalBatchCreatedEventHandler(EventHandler):
 
         # Update master RM, removing securities which are not in the Appraisal result because they are not held
         # self.held_securities_with_prices_repository.refresh_for_securities(data_date=appraisal_batch.data_date, securities=held_secs, remove_other_secs=True)
+
+
+@dataclass
+class PositionEventHandler(EventHandler):
+    position_event_publisher: EventPublisher
+
+    def handle(self, event: Union[PositionCreatedEvent, PositionDeletedEvent]):
+        """ Handle the event """
+        # Publish using the provided event publisher
+        try:
+            self.position_event_publisher.publish(event)
+        except Exception as ex:
+            logging.exception(ex)
+        return True  # commit offset
+
+    def handle_deserialization_error(self, ex):
+        """ What to do when deserialization fails """
+        logging.exception(ex)
+        return True  # commit offset
+
+
+@dataclass
+class PortfolioCreatedEventHandler(EventHandler):
+    portfolio_event_publisher: EventPublisher
+
+    def handle(self, event: PortfolioCreatedEvent):
+        """ Handle the event """
+        # Publish using the provided event publisher
+        try:
+            self.portfolio_event_publisher.publish(event)
+        except Exception as ex:
+            logging.exception(ex)
+        return True  # commit offset
+
+    def handle_deserialization_error(self, ex):
+        """ What to do when deserialization fails """
+        logging.exception(ex)
+        return True  # commit offset
 
 

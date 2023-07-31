@@ -68,7 +68,7 @@ class SecurityWithPricesRepository(ABC):
         pass
 
     @abstractmethod
-    def get(self, data_date: datetime.date, security: Security) -> List[SecurityWithPrices]:
+    def get(self, data_date: datetime.date, security: Union[List[Security],Security,None]=None) -> List[SecurityWithPrices]:
         pass
 
 
@@ -94,6 +94,16 @@ class PositionRepository(ABC):
     @abstractmethod
     def get(self, data_date: datetime.date, security: Security, portfolio: Portfolio) -> List[Position]:
         pass
+
+
+class PortfolioRepository(ABC):
+    @abstractmethod
+    def create(self, portfolio: Portfolio) -> Portfolio:
+        pass
+
+    @abstractmethod
+    def get(self) -> List[Portfolio]:
+        pass  # subclasses may implement specific args
 
 
 class PriceFeedRepository(ABC):  # TODO: is this needed?

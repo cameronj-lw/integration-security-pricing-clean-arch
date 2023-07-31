@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from app.domain.models import (
     Price, PriceBatch, AppraisalBatch, Security, 
     PriceAuditEntry, SecurityWithPrices,
-    PriceFeed, PriceFeedWithStatus, PriceSource, PriceType
+    PriceFeed, PriceFeedWithStatus, PriceSource, PriceType,
+    Position, Portfolio
 )
 
 
@@ -43,6 +44,21 @@ class PriceAuditEntryCreatedEvent(Event):
 @dataclass
 class SecurityWithPricesCreatedEvent(Event):
     security_with_prices: SecurityWithPrices
+
+
+@dataclass
+class PortfolioCreatedEvent(Event):
+    portfolio: Portfolio
+
+
+@dataclass
+class PositionCreatedEvent(Event):
+    position: Position
+
+
+@dataclass
+class PositionDeletedEvent(Event):
+    position: Position
 
 
 @dataclass

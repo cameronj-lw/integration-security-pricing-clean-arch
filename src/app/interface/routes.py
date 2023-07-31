@@ -59,6 +59,7 @@ class PricingFeedStatus(Resource):
         except Exception as e:
             return self.formatter.exception(e)        
             
+@api.route('/api////pricing/feed-status/<string:price_date>')
 @api.route('/api/pricing/feed-status/<string:price_date>')
 class PricingFeedStatusByDate(Resource):
     formatter = DefaultRESTFormatter()

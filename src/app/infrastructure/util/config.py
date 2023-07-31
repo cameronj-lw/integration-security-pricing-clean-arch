@@ -17,3 +17,8 @@ class AppConfig:
         """ Syntactic sugar to facilitate AppConfig().get(...) rather than AppConfig().parser.get(...) """
         return self.parser.get(*args, **kwargs)
 
+    def to_string(self):
+        with open(self.config_file_path, 'r') as f:
+            config_file_content = f.read()
+        return config_file_content
+

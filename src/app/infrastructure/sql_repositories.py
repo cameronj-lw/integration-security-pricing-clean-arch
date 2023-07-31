@@ -18,21 +18,23 @@ from app.application.repositories import UserWithColumnConfigRepository
 from app.domain.models import (
     Price, Security, PriceAuditEntry, PriceBatch
     , PriceFeed, PriceFeedWithStatus, PriceSource, PriceType
-    , Position, PriceValue
+    , Position, PriceValue, SecurityWithPrices, Portfolio
 )
 from app.domain.repositories import (
     SecurityRepository, PriceRepository, PriceBatchRepository
     , PriceFeedRepository, PriceFeedWithStatusRepository
     , PriceAuditEntryRepository, PriceSourceRepository, PriceTypeRepository
-    , PositionRepository
+    , PositionRepository, SecuritiesForDateRepository, SecurityWithPricesRepository
+    , PortfolioRepository
 )
 from app.infrastructure.sql_models import (
     MGMTDBPriceFeed, MGMTDBPriceFeedWithStatus
 )
 from app.infrastructure.sql_tables import (
     CoreDBManualPricingSecurityTable, CoreDBColumnConfigTable, CoreDBPriceAuditEntryTable
-    , CoreDBvwPriceView, CoreDBvwSecurityView, CoreDBvwPriceBatchView
-    , LWDBAPXAppraisalTable, LWDBPricingTable
+    , CoreDBvwPriceView, CoreDBvwSecurityView, CoreDBvwPriceBatchView, CoreDBvwHeldSecurityByDateView
+    , LWDBAPXAppraisalTable, LWDBPricingTable, CoreDBvwPortfolioView
+    , APXDBvQbRowDefPositionView, APXDBvPortfolioView
 )
 from app.infrastructure.util.config import AppConfig
 from app.infrastructure.util.date import get_current_bday, get_previous_bday
@@ -47,14 +49,27 @@ class CoreDBSecurityRepository(SecurityRepository):
     def create(self, security: Security) -> Security:
         pass  # TODO: implement
 
-    def get(self, lw_id: Union[List[str],str,None] = None) -> List[Security]:
-        query_result = CoreDBvwSecurityView().read()
+    def get(self, lw_id: Union[List[str],str,None] = None
+            , pms_security_id: Union[List[int],int,None] = None) -> List[Security]:
+        query_result = CoreDBvwSecurityView().read(
+            lw_id=lw_id if isinstance(lw_id, str) else None
+            , pms_security_id=pms_security_id if isinstance(pms_security_id, int) else None
+        )
+
+        # If 0 rows, return empty list
+        if not len(query_result.index):
+            return []
         
         # Trim to securities, if applicable
         if isinstance(lw_id, str):
             query_result = query_result[query_result['lw_id'].equals(lw_id)]
         elif isinstance(lw_id, list):
             query_result = query_result[query_result['lw_id'].isin(lw_id)]
+        if isinstance(pms_security_id, int):
+            logging.info(f'Filtering {len(query_result.index)} secs {query_result.columns} for PMS sec ID {pms_security_id}')
+            query_result = query_result[query_result['pms_security_id'].equals(pms_security_id)]
+        elif isinstance(pms_security_id, list):
+            query_result = query_result[query_result['pms_security_id'].isin(pms_security_id)]
 
         # query result should be a DataFrame. Need to convert to list of Securities:
         secs = [Security(sec['lw_id'], sec) for sec in query_result.to_dict('records')]
@@ -364,8 +379,16 @@ class CoreDBPriceAuditEntryRepository(PriceAuditEntryRepository):
     def create(self, price_audit_entry: PriceAuditEntry) -> PriceAuditEntry:
         pass
 
-    def get(self, data_date: Union[datetime.date,None]=None, security: Union[Security,None]=None) -> List[PriceAuditEntry]:
-        query_result = CoreDBPriceAuditEntryTable().read(data_date, security)
+    def get(self, data_date: Union[datetime.date,None]=None, security: Union[List[Security],Security,None]=None) -> List[PriceAuditEntry]:
+        query_result = CoreDBPriceAuditEntryTable().read(data_date)
+        
+        # Trim to securities, if applicable
+        if isinstance(security, Security):
+            query_result = query_result[query_result['lw_id'].equals(security.lw_id)]
+        elif isinstance(security, list):
+            lw_ids = [sec.lw_id for sec in security]
+            query_result = query_result[query_result['lw_id'].isin(lw_ids)]
+
         audit_entries = []
         for qr_dict in query_result.to_dict('records'):
             # Build PriceAuditEntry from this row in query result
@@ -401,8 +424,139 @@ class CoreDBPriceAuditEntryRepository(PriceAuditEntryRepository):
                     modified_by=qr_dict['modified_by'], modified_at=qr_dict['modified_at']
             )
             audit_entries.append(ae)
-        logging.info(f'SQL repo returning {audit_entries}')
+        logging.debug(f'SQL repo returning {audit_entries}')
         return audit_entries
+
+
+class CoreDBSecurityWithPricesRepository(SecurityWithPricesRepository):
+    # TODO_LAYERS: re-evaluate where this belongs? 
+    # e.g. pulling 'PXAPX' prices specifically for prev bday prices is more an application layer decision
+
+    def create(self, security_with_prices: SecurityWithPrices) -> SecurityWithPrices:
+        pass
+
+    def add_price(self, price: Price, mode='curr') -> SecurityWithPrices:
+        pass
+
+    def add_security(self, data_date: datetime.date, security: Security) -> SecurityWithPrices:
+        pass
+
+    def get(self, data_date: datetime.date, security: Union[List[Security],Security,None]=None) -> List[SecurityWithPrices]:
+        # Initialize - make into list if a single security is requested
+        requested_secs = [security] if isinstance(security, Security) else security
+
+        # Get securities
+        if requested_secs is None:
+            secs = CoreDBSecurityRepository().get(lw_id=None)
+        else:
+            secs = CoreDBSecurityRepository().get(lw_id=[sec.lw_id for sec in requested_secs])
+
+        # Get prev bday prices
+        prev_bday_prices = CoreDBPriceRepository().get(data_date=get_previous_bday(data_date)
+                , source=PriceSource('PXAPX'), security=secs)
+
+        # Get curr bday prices
+        curr_bday_prices = CoreDBPriceRepository().get(data_date=data_date, security=secs)
+        # Update source as translated source
+        for i, px in enumerate(curr_bday_prices):
+            px.source = self.translate_price_source(px.source)
+            curr_bday_prices[i] = px
+        # Filter to relevant prices
+        curr_bday_prices = [px for px in curr_bday_prices if self.feed_is_relevant(px.source)]
+
+        # Get audit trail
+        audit_trails = CoreDBPriceAuditEntryRepository().get(data_date=data_date, security=secs)
+
+        # Will append to results below
+        securities_with_prices = []
+        for sec in secs:
+            # Filter prices & audit trail for this security
+            sec_prev_bday_prices = [px for px in prev_bday_prices if px.security.lw_id == sec.lw_id]
+            sec_prev_bday_price = sec_prev_bday_prices[0] if len(sec_prev_bday_prices) else None
+            sec_curr_bday_prices = [px for px in curr_bday_prices if px.security.lw_id == sec.lw_id]
+            sec_audit_trail = [at for at in audit_trails if at.security.lw_id == sec.lw_id]
+
+            # Create SWP instance
+            swp = SecurityWithPrices(
+                    security=sec, data_date=data_date, curr_bday_prices=sec_curr_bday_prices
+                    , prev_bday_price=sec_prev_bday_price, audit_trail=sec_audit_trail
+            )
+
+            # Append it to master results
+            securities_with_prices.append(swp)
+
+        logging.info(f'CoreDBSecurityWithPricesRepository GET returning {len(securities_with_prices)} SWPs')
+        return securities_with_prices
+
+
+    # TODO_REFACTOR: should this be a generic function rather than belonging to class(es)?
+    def feed_is_relevant(self, source: PriceSource) -> bool:
+        """ Determine whether a pricing feed is relevant.
+        
+        Args:
+        - source (str): Name of the feed.
+
+        Returns:
+        - bool: True if the feed is relevant, else False.
+        """
+        relevant_price_source_names = (
+            AppConfig().parser.get('app', 'vendor_price_sources').split(',')
+            + AppConfig().parser.get('app', 'lw_price_sources').split(','))
+        relevant_price_source_names = [s.strip() for s in relevant_price_source_names]
+        # TODO: should relevant price sources be different than relevant pricing feeds in the config? 
+        return (source.name in relevant_price_source_names)
+
+    def translate_price_source(self, source: PriceSource) -> PriceSource:
+        """ Translate the price source from the batch into a more generic source
+        
+        Args:
+        - source (str): Name of the source.
+
+        Returns:
+        - str: Translated source.
+        """
+        if source.name[:3] == 'BB_' and '_DERIVED' not in source.name:
+            return PriceSource('BLOOMBERG')
+        elif source.name == 'FTSETMX_PX':
+            return PriceSource('FTSE')
+        elif source.name == 'MARKIT_LOAN_CLEANPRICE':
+            return PriceSource('MARKIT')
+        elif source.name == 'FUNDRUN_EQUITY':
+            return PriceSource('FUNDRUN')
+        elif source.name in ('FIDESK_MANUALPRICE', 'LW_OVERRIDE'):
+            return PriceSource('OVERRIDE')
+        elif source.name in ('FIDESK_MISSINGPRICE', 'LW_MANUAL'):
+            return PriceSource('MANUAL')
+        elif source.name == 'PXAPX':
+            return PriceSource('APX')
+        else:
+            return source
+
+
+class CoreDBHeldSecurityRepository(SecuritiesForDateRepository):
+    def create(self, data_date: datetime.date, security: Union[Security, List[Security]]) -> int:
+        pass  # Not needed to implement here, we think...
+
+    def get(self, data_date: datetime.date, security: Union[Security, None] = None) -> List[Security]:
+        if security is not None:
+            raise NotImplementedError(f'{cls} GET does not support querying for individual securities.')
+        query_result = CoreDBvwHeldSecurityByDateView().read(data_date=data_date)
+        
+        # query result should be a DataFrame. Need to convert to list of Securities:
+        secs = [Security(sec['lw_id'], sec) for sec in query_result.to_dict('records')]
+        return secs
+
+
+class CoreDBPortfolioRepository(PortfolioRepository):
+    def create(self, portfolio: Portfolio) -> Portfolio:
+        pass  # Not needed to implement here, we think...
+
+    def get(self, portfolio_code: Union[str,None]=None, pms_portfolio_id: Union[int,None]=None) -> List[Portfolio]:
+        query_result = CoreDBvwPortfolioView().read(portfolio_code=portfolio_code, pms_portfolio_id=pms_portfolio_id)
+        
+        # query result should be a DataFrame. Need to convert to list of Securities:
+        portfs = [Portfolio(portf['portfolio_code'], portf) for portf in query_result.to_dict('records')]
+        return portfs
 
 
 class CoreDBPriceSourceRepository(PriceSourceRepository):
@@ -419,5 +573,42 @@ class APXDBPriceTypeRepository(PriceTypeRepository):
 
     def get(self, name: str) -> List[PriceType]:
         pass
+
+
+class APXDBHeldSecurityRepository(PositionRepository):
+    def create(self, security: Union[Security, List[Security]]) -> int:
+        pass
+
+    def get(self, lw_id: Union[List[str],str,None] = None) -> List[Security]:
+        print(f'Getting apx positions...')
+        apx_positions = APXDBvQbRowDefPositionView().read()
+        print(f'Getting securities...')
+        securities = CoreDBSecurityRepository().get()
+        print(f'Mapping...')
+        held_secs = [sec for sec in securities if sec.attributes['pms_security_id'] in apx_positions['SecurityID']]
+        return held_secs
+
+
+class APXDBPortfolioRepository(PortfolioRepository):
+    def create(self, portfolio: Portfolio) -> Portfolio:
+        pass  # Not needed until there's an app creating portfolios in APX to use this
+
+    def get(self, portfolio_id: Union[int,None]=None) -> List[Portfolio]:
+        query_result = APXDBvPortfolioView().read(portfolio_id=portfolio_id)
+
+        # Loop thru, add some LW preferred column names, then append to results
+        res = []
+        for portf_dict in query_result.to_dict('records'):
+            logging.info(f"Processing portfolio dict {portf_dict}")
+            portf_dict.update({
+                'portfolio_code': portf_dict['PortfolioCode']
+                , 'pms_portfolio_id': portf_dict['PortfolioID']
+                , 'portfolio_type': portf_dict['PortfolioTypeCode']
+            })
+            portfolio = Portfolio(portf_dict['portfolio_code'], portf_dict)
+            res.append(portfolio)
+        
+        return res
+
 
 

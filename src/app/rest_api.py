@@ -5,14 +5,18 @@ from configparser import ConfigParser
 import datetime
 import logging
 import os
+import socket
 import sys
-
-# Append to pythonpath
-src_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(src_dir)
+import time
 
 # pypi
 from flask import Flask
+
+# Append to pythonpath
+src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+src_dir = src_dir.replace('C:\\', f'\\\\WS215\\c$\\', 1)  
+# TODO: remove above once running local files
+sys.path.append(src_dir)
 
 # native
 from application.query_handlers import (
@@ -44,7 +48,6 @@ from infrastructure.util.logging import setup_logging
 
 # Initialize the Flask app and register blueprint
 app = Flask(__name__)
-
 
 # Initialize command handlers and query handlers
 price_feed_with_status_query_handler = PriceFeedWithStatusQueryHandler(MGMTDBPriceFeedWithStatusRepository())
@@ -85,13 +88,17 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(description='Kafka Consumer')
         parser.add_argument('--log_level', '-l', type=str.upper, choices=['DEBUG', 'INFO', 'WARN', 'ERROR', 'CRITICAL'], help='Log level')
         args = parser.parse_args()
-        log_file = None  # prepare_dated_file_path(AppConfig().get("logging", "log_dir"), datetime.date.today(), AppConfig().get("logging", "rest_api_logfile"))
-        # TODO: figure out file permission "another process is using this file" error
+        # Looks like flask runs 2 (or more?) python processes when running the flask app.
+        # This caused "file is being used by another process" when trying to rotate out an old log file.
+        # Solution is to use rotate=False as follows.
+        log_file = prepare_dated_file_path(AppConfig().get("logging", "log_dir"), datetime.date.today(), AppConfig().get("logging", "rest_api_logfile"), rotate=False)
         setup_logging(args.log_level, log_file)
+
+        # Get configs and run flask app
         host = AppConfig().get("rest_api", "host")
         port = AppConfig().get("rest_api", "port")
         debug = AppConfig().get("rest_api", "debug")
-        app.run(host=host, port=port, debug=debug)
+        app.run(host=host, port=port, debug=debug, threaded=False, processes=1)
     except Exception as e:
         logging.exception(f"{type(e).__name__}: {e}")
         sys.exit(1)

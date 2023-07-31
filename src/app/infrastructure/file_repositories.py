@@ -20,6 +20,7 @@ from app.domain.repositories import (
     , SecuritiesForDateRepository
 )
 
+from app.infrastructure.sql_repositories import CoreDBHeldSecurityRepository, CoreDBSecurityWithPricesRepository, APXDBHeldSecurityRepository
 from app.infrastructure.util.config import AppConfig
 from app.infrastructure.util.date import get_previous_bday, get_current_bday, get_next_bday
 from app.infrastructure.util.file import (
@@ -108,8 +109,9 @@ class JSONHeldSecuritiesWithPricesRepository(SecuritiesWithPricesRepository):
             return get_res
 
     def refresh_for_securities(self, data_date: datetime.date, securities: List[Security], remove_other_secs=False):
+
         # Find which securities to refresh. This will be the ones from the provided list which are held.
-        held_secs = JSONHeldSecuritiesRepository().get(data_date)
+        held_secs =  APXDBHeldSecurityRepository().get()  # CoreDBHeldSecurityRepository().get(data_date)
         if held_secs is None:
             logging.info(f'No held_secs found')
             lw_ids_to_refresh = [s.lw_id for s in securities]
@@ -128,16 +130,34 @@ class JSONHeldSecuritiesWithPricesRepository(SecuritiesWithPricesRepository):
         # Loop thru and append each security to result
         logging.info(f'Refreshing master RM for {len(lw_ids_to_refresh)} securities...')
         logged = False
+
+        # Get SWPs - query once to avoid many queries to DB for each security
+        securities_with_prices = CoreDBSecurityWithPricesRepository().get(data_date=data_date, security=securities)
+
         for lw_id in lw_ids_to_refresh:
-            swp_dict = get_read_model_content(read_model_name=JSONSecurityWithPricesRepository().read_model_name
-                    , file_name=f'{lw_id}.json', data_date=data_date)
-            logging.debug(f'Refreshing for {swp_dict}')
-            swp = SecurityWithPrices.from_dict(swp_dict)
-            if swp is not None:
+            sec_swps = [swp for swp in securities_with_prices if swp.security.lw_id == lw_id]
+            sec_swp = sec_swps[0] if len(sec_swps) else None
+            if sec_swp is not None:
                 if not logged:
-                    logging.debug(f'Appending {swp}')
+                    logging.debug(f'Appending {sec_swp}')
                     logged = True
-                res.append(swp)
+                res.append(sec_swp)
+
+        # TODO_CLEANUP: remove once not needed, i.e. when deciding to retire usage of the security_with_prices RM
+        # # Loop thru and append each security to result
+        # logging.info(f'Refreshing master RM for {len(lw_ids_to_refresh)} securities...')
+        # logged = False
+        # for lw_id in lw_ids_to_refresh:
+        #     logging.info(f'Getting read model {JSONSecurityWithPricesRepository().read_model_name} for {data_date}')
+        #     swp_dict = get_read_model_content(read_model_name=JSONSecurityWithPricesRepository().read_model_name
+        #             , file_name=f'{lw_id}.json', data_date=data_date)
+        #     logging.info(f'Refreshing for {lw_id}: {swp_dict}')
+        #     swp = SecurityWithPrices.from_dict(swp_dict)
+        #     if swp is not None:
+        #         if not logged:
+        #             logging.debug(f'Appending {swp}')
+        #             logged = True
+        #         res.append(swp)
 
         # Put into JSON format
         swp_dicts = [swp.to_dict() for swp in res]

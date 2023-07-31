@@ -7,11 +7,16 @@ import datetime
 import hashlib
 import json
 import logging
+import msvcrt
 import os
 import re
 import sys
+import time
 from typing import Union
 import win32net  # TODO_UBUNTU
+
+# pypi
+import psutil
 
 # native
 from app.infrastructure.util.config import AppConfig
@@ -24,6 +29,7 @@ def rotate_file(folder_name, file_name):
     :param file_name: The name of the file to rotate
     :return: None
     """
+    print(f'Rotating for {folder_name} {file_name}')
     # Make sure file has the format <name>.<extension>
     match = re.match(r'(.+)\.([^\.]+)', file_name)
     if match:
@@ -42,6 +48,9 @@ def rotate_file(folder_name, file_name):
                     rotation += 1
                 else:
                     # We found a slot. Rotate and break loop
+                    time.sleep(1)
+                    print(f'{src_path} open: {is_file_open(src_path)}')
+                    print(f'{dst_path} open: {is_file_open(dst_path)}')
                     os.rename(src_path, dst_path)
                     break
     else:
@@ -81,6 +90,8 @@ def prepare_dated_file_path(folder_name, date, file_name, rotate=True):
     :param rotate: Whether or not to rotate existing files
     :return: Full path we can write to
     """
+    print(f'Preparing dated file path')
+
     date_str = date.strftime('%Y%m')
     day_str = date.strftime('%d')
 
@@ -134,12 +145,30 @@ def get_read_model_content(read_model_name: str, file_name: str, data_date: Unio
     - likely dict or list: The JSON content. Or None, if the file DNE.
     """
     read_model_file = get_read_model_file(read_model_name, file_name, data_date)
-    logging.debug(f'Looking for RM file {read_model_file}')
+    logging.info(f'Looking for RM file {read_model_file}')
     if not os.path.isfile(read_model_file):
         return None
-    with open(read_model_file, 'r') as f:
-        content = json.loads(f.read())
-    return content
+    
+    try:
+        with open(read_model_file, 'r') as f:
+            logging.debug(f'Acquiring lock and reading from {read_model_file}...')
+
+            # file_size = os.path.getsize(read_model_file)  # in bytes
+            
+            # Acquire the lock before reading
+            # msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, file_size)
+            
+            json_content = f.read()
+            
+            # Release the lock after reading
+            # msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, file_size)
+
+        logging.debug(f'Successfully read from {read_model_file}.')
+        content = json.loads(json_content)
+        return content
+    except Exception as e:
+        logging.error(f'Error reading from and/or parsing JSON content from {read_model_file}: {e}')
+        return None
 
 def get_read_model_folder(read_model_name: str, data_date: Union[datetime.date, None]=None) -> str:
     """
@@ -153,7 +182,7 @@ def get_read_model_folder(read_model_name: str, data_date: Union[datetime.date, 
     - str: The path to the folder containing JSON files for the given date.
     """
     data_dir = AppConfig().parser.get('files', 'data_dir')
-    base_dir = os.path.join(data_dir, 'lw', 'read_model', read_model_name)
+    base_dir = os.path.join(data_dir, 'lw', 'read_model_clean_arch', read_model_name)
     if data_date is None:
         full_path = base_dir
         if not os.path.exists(full_path):
@@ -197,6 +226,37 @@ def set_read_model_content(read_model_name, file_name, content, data_date=None):
     """
     read_model_file = get_read_model_file(read_model_name, file_name, data_date)
     json_content = json.dumps(content, indent=4, default=str)
-    with open(read_model_file, 'w') as f:
-        logging.debug(f'writing to {json_content}...')
-        f.write(json_content)
+    try:
+        with open(read_model_file, 'w') as f:
+            logging.debug(f'Acquiring lock and writing to {read_model_file}:\n{json_content}\n...')
+
+            # file_size = len(json_content.encode('utf-8'))  # in bytes
+        
+            # Acquire the lock before writing
+            # msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, file_size)
+            
+            f.write(json_content)
+            f.flush()
+            
+            # Release the lock after writing
+            # msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, file_size)
+        
+        logging.debug(f'Successfully wrote to {read_model_file}.')
+
+    except Exception as e:
+        logging.error(f'Error writing to {read_model_file}: {e}')
+
+
+def is_file_open(file_path):
+    # Get the process ID of the current Python process
+    current_process = psutil.Process()
+
+    # Get all open files (file descriptors) for the current process
+    open_files = current_process.open_files()
+
+    # Check if the given file path matches any of the open file paths
+    for file in open_files:
+        if file.path == file_path:
+            return True
+
+    return False
