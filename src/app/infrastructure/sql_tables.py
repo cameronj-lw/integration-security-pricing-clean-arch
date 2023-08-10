@@ -55,6 +55,25 @@ class APXDBvQbRowDefPositionView(BaseTable):
 		return self.execute_read(stmt)
 
 
+class APXDBAdvPositionTable(BaseTable):
+	config_section = 'apxdb'
+	table_name = 'AdvPosition'
+	schema = 'dbo'
+
+	def read(self):
+		"""
+		Read all entries
+
+		:return: DataFrame
+		"""
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		return self.execute_read(stmt)
+
+
 class APXDBvPortfolioView(BaseTable):
 	config_section = 'apxdb'
 	table_name = 'vPortfolio'
@@ -234,9 +253,9 @@ class CoreDBvwHeldSecurityView(BaseTable):
 	schema = 'dbo'
 	table_name = 'vw_held_security'
 
-	def read(self, data_date=None):
+	def read(self):
 		"""
-		Read all entries, optionally for data_date
+		Read all entries
 
 		:return: DataFrame
 		"""
@@ -245,8 +264,6 @@ class CoreDBvwHeldSecurityView(BaseTable):
 			stmt = sql.select(self.table_def)
 		else:
 			stmt = sql.select([self.table_def])
-		if data_date is not None:
-			stmt = stmt.where(self.c.data_date == data_date)
 		return self.execute_read(stmt)
 
 
@@ -291,6 +308,47 @@ class CoreDBvwPortfolioView(BaseTable):
 			stmt = stmt.where(self.c.portfolio_code == portfolio_code)
 		if pms_portfolio_id is not None:
 			stmt = stmt.where(self.c.pms_portfolio_id == pms_portfolio_id)
+		return self.execute_read(stmt)
+
+
+class CoreDBvwAPXAppraisalView(BaseTable):
+	config_section = 'coredb'
+	schema = 'dbo'
+	table_name = 'vw_apx_appraisal'
+
+	def read(self, data_date=None):
+		"""
+		Read all entries, optionally for data_date
+
+		:return: DataFrame
+		"""
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		if data_date is not None:
+			stmt = stmt.where(self.c.data_date == data_date)
+		return self.execute_read(stmt)
+
+	def read_distinct_securities(self, data_date=None):
+		"""
+		Read all entries, optionally for data_date
+
+		:return: DataFrame
+		"""
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.c.lw_id, self.c.pms_security_id)
+		else:
+			stmt = sql.select([self.c.lw_id, self.c.pms_security_id])
+		if data_date is not None:
+			stmt = stmt.where(self.c.data_date == data_date)
+		
+		# Since we only want distinct records:
+		stmt = stmt.distinct()
+
+		# Execute and return
 		return self.execute_read(stmt)
 
 

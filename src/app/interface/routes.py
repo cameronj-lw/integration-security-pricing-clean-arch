@@ -90,6 +90,7 @@ class TransactionByDate(Resource):
     def get(self, trade_date):
         return  # TODO_WAVE3: implement
 
+@api.route('/api////pricing/audit-reason')
 @api.route('/api/pricing/audit-reason')
 class PricingAuditReason(Resource):
     formatter = DefaultRESTFormatter()

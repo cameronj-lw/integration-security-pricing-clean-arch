@@ -182,7 +182,7 @@ def get_read_model_folder(read_model_name: str, data_date: Union[datetime.date, 
     - str: The path to the folder containing JSON files for the given date.
     """
     data_dir = AppConfig().parser.get('files', 'data_dir')
-    base_dir = os.path.join(data_dir, 'lw', 'read_model_clean_arch', read_model_name)
+    base_dir = os.path.join(data_dir, 'lw', 'read_model', read_model_name)
     if data_date is None:
         full_path = base_dir
         if not os.path.exists(full_path):

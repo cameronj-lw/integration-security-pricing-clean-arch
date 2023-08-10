@@ -92,7 +92,7 @@ class PositionRepository(ABC):
         pass
 
     @abstractmethod
-    def get(self, data_date: datetime.date, security: Security, portfolio: Portfolio) -> List[Position]:
+    def get(self, data_date: Union[datetime.date,None], security: Union[Security,None], portfolio: Union[Portfolio,None]) -> List[Position]:
         pass
 
 

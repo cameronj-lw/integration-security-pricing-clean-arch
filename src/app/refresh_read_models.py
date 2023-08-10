@@ -20,11 +20,18 @@ sys.path.append(src_dir)
 from application.event_handlers import (
     PriceBatchCreatedEventHandler, AppraisalBatchCreatedEventHandler
     , SecurityCreatedEventHandler
+    , PositionEventHandler, PortfolioCreatedEventHandler
 )
 from domain.events import (
-    PriceBatchCreatedEvent, AppraisalBatchCreatedEvent, SecurityCreatedEvent
+    PriceBatchCreatedEvent, AppraisalBatchCreatedEvent
+    , SecurityCreatedEvent
+    , PositionCreatedEvent, PortfolioCreatedEvent
 )
+
 # from infrastructure.event_handlers import KafkaEventHandler  # TODO_CLEANUP: remove when not needed
+from infrastructure.event_publishers import (
+    KafkaCoreDBPositionEventProducer, KafkaCoreDBPortfolioCreatedEventProducer
+)
 from infrastructure.event_subscribers import (KafkaCoreDBAppraisalBatchCreatedEventConsumer
     , KafkaCoreDBPriceBatchCreatedEventConsumer, KafkaCoreDBSecurityCreatedEventConsumer
 )
@@ -36,6 +43,8 @@ from infrastructure.sql_repositories import (
     , LWDBAPXAppraisalPositionRepository
     , CoreDBPriceBatchRepository
     , CoreDBPriceAuditEntryRepository
+    , CoreDBPriceAuditEntryRepository
+    , APXDBLivePositionRepository, APXDBPortfolioRepository
 )
 from infrastructure.util.config import AppConfig
 from infrastructure.util.file import prepare_dated_file_path
@@ -45,16 +54,17 @@ from infrastructure.util.logging import setup_logging
 def main():
     parser = argparse.ArgumentParser(description='Kafka Consumer')
     parser.add_argument('--data_type', '-dt', type=str, required=True
-        , choices=['security-refresh', 'master-refresh', 'price-refresh'], help='Type of data to consume')
-    parser.add_argument('--reset_offset', '-ro', action='store_true', default=False, help='Reset consumer offset to beginning')
+        , choices=['security', 'master', 'price', 'position', 'portfolio']
+        , help='Type of data to refresh')
     parser.add_argument('--log_level', '-l', type=str.upper, choices=['DEBUG', 'INFO', 'WARN', 'ERROR', 'CRITICAL'], help='Log level')
     parser.add_argument('--refresh_prices', '-rp', type=str, required=False, help='Refresh prices for date, YYYYMMDD format')
     args = parser.parse_args()
-    if args.data_type == 'security-refresh':
+    if args.data_type == 'security':
         secs = CoreDBSecurityRepository().get()
         event_handler = SecurityCreatedEventHandler(
             price_repository = CoreDBPriceRepository()
             , security_with_prices_repository = JSONSecurityWithPricesRepository()
+            , audit_trail_repository = CoreDBPriceAuditEntryRepository()
             , held_securities_with_prices_repository = JSONHeldSecuritiesWithPricesRepository()
         )
         setup_logging(args.log_level)
@@ -63,13 +73,13 @@ def main():
             #     continue  # TODO_DEBUG: remove
             logging.info(f'Handling security: {sec}')
             event_handler.handle(SecurityCreatedEvent(sec))
-    elif args.data_type == 'master-refresh':
+    elif args.data_type == 'master':
         setup_logging(args.log_level)
         secs = CoreDBSecurityRepository().get()
         JSONHeldSecuritiesWithPricesRepository().refresh_for_securities(
             data_date=datetime.datetime.strptime(args.refresh_prices, '%Y%m%d').date(), securities=secs
         )
-    elif args.data_type == 'price-refresh':
+    elif args.data_type == 'price':
         price_batches = CoreDBPriceBatchRepository().get(
                 data_date=datetime.datetime.strptime(args.refresh_prices, '%Y%m%d').date())
         event_handler = PriceBatchCreatedEventHandler(
@@ -84,6 +94,26 @@ def main():
         for batch in price_batches:
             logging.info(f'Handling price batch: {batch}')
             event_handler.handle(PriceBatchCreatedEvent(batch))
+    elif args.data_type == 'position':
+        positions = APXDBLivePositionRepository().get() 
+        event_handler = PositionEventHandler(
+                position_event_publisher = KafkaCoreDBPositionEventProducer()
+        )
+        setup_logging(args.log_level)
+        logging.info(f'Processing {len(positions)} positions...')
+        for position in positions:
+            logging.info(f'Handling position: {position}')
+            event_handler.handle(PositionCreatedEvent(position))
+    elif args.data_type == 'portfolio':
+        portfolios = APXDBPortfolioRepository().get() 
+        event_handler = PortfolioCreatedEventHandler(
+                portfolio_event_publisher = KafkaCoreDBPortfolioCreatedEventProducer()
+        )
+        setup_logging(args.log_level)
+        logging.info(f'Processing {len(portfolios)} portfolios...')
+        for portfolio in portfolios:
+            logging.info(f'Handling portfolio: {portfolio}')
+            event_handler.handle(PortfolioCreatedEvent(portfolio))
     else:
         logging.error(f"Unconfigured data_type: {args.data_type}!")
         return 1

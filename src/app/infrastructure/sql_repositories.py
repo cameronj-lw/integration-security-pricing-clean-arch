@@ -33,8 +33,9 @@ from app.infrastructure.sql_models import (
 from app.infrastructure.sql_tables import (
     CoreDBManualPricingSecurityTable, CoreDBColumnConfigTable, CoreDBPriceAuditEntryTable
     , CoreDBvwPriceView, CoreDBvwSecurityView, CoreDBvwPriceBatchView, CoreDBvwHeldSecurityByDateView
+    , CoreDBvwHeldSecurityView, CoreDBvwAPXAppraisalView
     , LWDBAPXAppraisalTable, LWDBPricingTable, CoreDBvwPortfolioView
-    , APXDBvQbRowDefPositionView, APXDBvPortfolioView
+    , APXDBvQbRowDefPositionView, APXDBvPortfolioView, APXDBAdvPositionTable
 )
 from app.infrastructure.util.config import AppConfig
 from app.infrastructure.util.date import get_current_bday, get_previous_bday
@@ -216,7 +217,8 @@ class LWDBPriceRepository(PriceRepository):
                 
         # Rotate scenario
         table = LWDBPricingTable()
-        table.base_scenario = 'LW_SEC_PRICING'
+        table.base_scenario = AppConfig().get('lwdb', 'pricing_base_scenario', fallback='LW_SEC_PRICING')
+        
         for px in _prices:
             # We want to rotate for each source and security combo separately.
             # By doing this, if there are other securities for a given source, they will remain intact,
@@ -539,11 +541,17 @@ class CoreDBHeldSecurityRepository(SecuritiesForDateRepository):
 
     def get(self, data_date: datetime.date, security: Union[Security, None] = None) -> List[Security]:
         if security is not None:
-            raise NotImplementedError(f'{cls} GET does not support querying for individual securities.')
-        query_result = CoreDBvwHeldSecurityByDateView().read(data_date=data_date)
+            raise NotImplementedError(f'CoreDBHeldSecurityRepository GET does not support querying for individual securities.')
+        query_result = CoreDBvwAPXAppraisalView().read_distinct_securities(data_date=data_date)
+
+        # If there is a query result, we'll use it:
+        if len(query_result.index):
+            secs = [Security(sec['lw_id'], {'pms_security_id': sec['pms_security_id']}) for sec in query_result.to_dict('records')]
+        else:  # If not, we'll query the CoreDB live positions view and use that:
+            query_result = CoreDBvwHeldSecurityView().read()
+            secs = [Security(sec['lw_id'], sec) for sec in query_result.to_dict('records')]
         
-        # query result should be a DataFrame. Need to convert to list of Securities:
-        secs = [Security(sec['lw_id'], sec) for sec in query_result.to_dict('records')]
+        # Return resulting Securities list
         return secs
 
 
@@ -575,7 +583,7 @@ class APXDBPriceTypeRepository(PriceTypeRepository):
         pass
 
 
-class APXDBHeldSecurityRepository(PositionRepository):
+class APXDBHeldSecurityRepository(SecurityRepository):
     def create(self, security: Union[Security, List[Security]]) -> int:
         pass
 
@@ -589,6 +597,35 @@ class APXDBHeldSecurityRepository(PositionRepository):
         return held_secs
 
 
+class APXDBLivePositionRepository(PositionRepository):
+    def create(self, position: Position) -> Position:
+        pass
+
+    def get(self, data_date: Union[datetime.date,None]=None, security: Union[Security,None]=None
+                , portfolio: Union[Portfolio,None]=None) -> List[Position]:
+        query_result = APXDBAdvPositionTable().read()
+        
+        # query result should be a DataFrame. Need to convert to list of Positions:
+        res = []
+        for pos_dict in query_result.to_dict('records'):
+
+            # Add pms_position_id (LW naming convention)
+            pos_dict.update({'pms_position_id': pos_dict['PositionID']})
+
+            # Create Position instance, append to results
+            position = Position(
+                portfolio=Portfolio(portfolio_code='', attributes={'pms_portfolio_id': pos_dict['PortfolioID']})
+                , data_date=datetime.date.today()
+                , security=Security(lw_id='', attributes={'pms_security_id': pos_dict['SecurityID']})
+                , quantity=pos_dict['Quantity'], is_short=pos_dict['IsShortPosition']
+                , attributes=pos_dict
+            )
+            res.append(position)
+
+        # Finally, return
+        return res
+
+
 class APXDBPortfolioRepository(PortfolioRepository):
     def create(self, portfolio: Portfolio) -> Portfolio:
         pass  # Not needed until there's an app creating portfolios in APX to use this
@@ -600,14 +637,19 @@ class APXDBPortfolioRepository(PortfolioRepository):
         res = []
         for portf_dict in query_result.to_dict('records'):
             logging.info(f"Processing portfolio dict {portf_dict}")
+
+            # Add LW naming convention keys
             portf_dict.update({
                 'portfolio_code': portf_dict['PortfolioCode']
                 , 'pms_portfolio_id': portf_dict['PortfolioID']
                 , 'portfolio_type': portf_dict['PortfolioTypeCode']
             })
+
+            # Create Portfolio instance and append to results
             portfolio = Portfolio(portf_dict['portfolio_code'], portf_dict)
             res.append(portfolio)
         
+        # Finally, return
         return res
 
 

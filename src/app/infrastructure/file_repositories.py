@@ -20,7 +20,10 @@ from app.domain.repositories import (
     , SecuritiesForDateRepository
 )
 
-from app.infrastructure.sql_repositories import CoreDBHeldSecurityRepository, CoreDBSecurityWithPricesRepository, APXDBHeldSecurityRepository
+from app.infrastructure.sql_repositories import (
+    CoreDBHeldSecurityRepository, CoreDBSecurityWithPricesRepository
+    , APXDBHeldSecurityRepository
+)
 from app.infrastructure.util.config import AppConfig
 from app.infrastructure.util.date import get_previous_bday, get_current_bday, get_next_bday
 from app.infrastructure.util.file import (
@@ -111,7 +114,7 @@ class JSONHeldSecuritiesWithPricesRepository(SecuritiesWithPricesRepository):
     def refresh_for_securities(self, data_date: datetime.date, securities: List[Security], remove_other_secs=False):
 
         # Find which securities to refresh. This will be the ones from the provided list which are held.
-        held_secs =  APXDBHeldSecurityRepository().get()  # CoreDBHeldSecurityRepository().get(data_date)
+        held_secs =  CoreDBHeldSecurityRepository().get(data_date=data_date)  # CoreDBHeldSecurityRepository().get(data_date)
         if held_secs is None:
             logging.info(f'No held_secs found')
             lw_ids_to_refresh = [s.lw_id for s in securities]

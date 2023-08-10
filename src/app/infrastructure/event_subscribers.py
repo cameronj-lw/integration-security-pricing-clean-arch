@@ -117,7 +117,7 @@ class KafkaEventConsumer(EventSubscriber):
                         logging.info("Done committing offset")
                     else:
                         logging.info("Not committing offset, likely due to the most recent exception")
-                time.sleep(1)
+                # time.sleep(1)
         except KeyboardInterrupt:
             pass
         finally:
