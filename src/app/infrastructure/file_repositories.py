@@ -4,7 +4,8 @@ import datetime
 import json
 import logging
 import os
-from typing import List, Union
+import re
+from typing import List, Union, Tuple
 
 # native
 from app.application.models import PricingAttachment, DateWithPricingAttachments
@@ -22,7 +23,8 @@ from app.domain.repositories import (
 
 from app.infrastructure.sql_repositories import (
     CoreDBHeldSecurityRepository, CoreDBSecurityWithPricesRepository
-    , APXDBHeldSecurityRepository
+    , APXDBHeldSecurityRepository, APXDBIMEXLogFolderRepository
+    , CoreDBSecurityRepository
 )
 from app.infrastructure.util.config import AppConfig
 from app.infrastructure.util.date import get_previous_bday, get_current_bday, get_next_bday
@@ -41,6 +43,8 @@ class CreateFailedException(Exception):
 
 
 class JSONHeldSecuritiesRepository(SecuritiesForDateRepository):
+    # TODO_CLEANUP: retire this class if not being used?
+
     read_model_name = 'held_securities'
     file_name = 'lw_id.json'
 
@@ -93,16 +97,16 @@ class JSONHeldSecuritiesRepository(SecuritiesForDateRepository):
 
 
 class JSONHeldSecuritiesWithPricesRepository(SecuritiesWithPricesRepository):
+
     read_model_name = 'held_securities_with_prices'
     file_name = 'held.json'
 
     def create(self, data_date: datetime.date, securities_with_prices: List[SecurityWithPrices]) -> List[SecurityWithPrices]:
-        # Get secs with prices into JSON format
-        securities_with_prices_dicts = [swp.to_dict() for swp in securities_with_prices]
-        json_content = json.dumps(securities_with_prices_dicts, indent=4, default=str)
+        # Get secs with prices into dict format
+        swps_dicts = [swp.to_dict() for swp in securities_with_prices]
         
         # Save to file
-        set_read_model_content(read_model_name=self.read_model_name, file_name=self.file_name, content=json_content, data_date=data_date)
+        set_read_model_content(read_model_name=self.read_model_name, file_name=self.file_name, content=swps_dicts, data_date=data_date)
         
         # Confirm it was successfully created. If not, throw exception.
         get_res = self.get(data_date)
@@ -146,24 +150,20 @@ class JSONHeldSecuritiesWithPricesRepository(SecuritiesWithPricesRepository):
                     logged = True
                 res.append(sec_swp)
 
-        # TODO_CLEANUP: remove once not needed, i.e. when deciding to retire usage of the security_with_prices RM
-        # # Loop thru and append each security to result
-        # logging.info(f'Refreshing master RM for {len(lw_ids_to_refresh)} securities...')
-        # logged = False
-        # for lw_id in lw_ids_to_refresh:
-        #     logging.info(f'Getting read model {JSONSecurityWithPricesRepository().read_model_name} for {data_date}')
-        #     swp_dict = get_read_model_content(read_model_name=JSONSecurityWithPricesRepository().read_model_name
-        #             , file_name=f'{lw_id}.json', data_date=data_date)
-        #     logging.info(f'Refreshing for {lw_id}: {swp_dict}')
-        #     swp = SecurityWithPrices.from_dict(swp_dict)
-        #     if swp is not None:
-        #         if not logged:
-        #             logging.debug(f'Appending {swp}')
-        #             logged = True
-        #         res.append(swp)
-
         # Put into JSON format
-        swp_dicts = [swp.to_dict() for swp in res]
+        swp_dicts = []
+        for swp in res:
+            swp_dict = swp.to_dict()
+            # Need to replace audit_trail which are empty arrays with None, per Verve #5146
+            # TODO: could the front-end be changed to work with an empty array rather than requiring null if empty?
+            # If so, this whole section can & should be condensed to use list comprehension as follows:
+            # swp_dicts = [swp.to_dict() for swp in res]
+            if 'audit_trail' in swp_dict:
+                if isinstance(swp_dict['audit_trail'], list):
+                    if not len(swp_dict['audit_trail']):
+                        swp_dict['audit_trail'] = None
+            # Now can append to the master list of dicts
+            swp_dicts.append(swp_dict)        
 
         # Save to file
         set_read_model_content(read_model_name=self.read_model_name, file_name=self.file_name, content=swp_dicts, data_date=data_date)
@@ -182,54 +182,37 @@ class JSONHeldSecuritiesWithPricesRepository(SecuritiesWithPricesRepository):
         securities_with_prices = [SecurityWithPrices.from_dict(d) for d in swps_dicts]
         return securities_with_prices
 
-
-# TODO_CLEANUP: remove when not needed
-# class JSONSecurityRepository(SecurityRepository):
-#     read_model_name = 'security'
-
-#     def create(self, security: Security):
-#         # Get dict
-#         sec_dict = security.to_dict()
-#         json_content = json.dumps(sec_dict, indent=4, default=str)
+    def remove_securities(self, data_date: datetime.date, securities: Union[List[Security], Security]):
+        if isinstance(securities, Security):
+            # Need to convert to List
+            securities = [securities]
         
-#         # Save to file
-#         set_read_model_content(read_model_name=self.read_model_name, file_name=self.file_name, content=json_content, data_date=data_date)
-        
-#         # Confirm it was successfully created. If not, throw exception.
-#         get_res = self.get(security)
-#         if get_res is None:
-#             raise CreateFailedException(f"Failed to add {security.lw_id} to JSON security repo")
-#         else:
-#             return get_res[0]
+        # Get which lw_ids we want to remove (assumption is because they are no longer held)
+        # Some securities may have an empty lw_id. For those we can find the lw_id based on pms_security_id instead
+        lw_ids_to_remove = []
+        for sec in securities:
+            if len(sec.lw_id):
+                # If we have an lw_id, add it
+                lw_ids_to_remove.append(sec.lw_id)
+            else:
+                # lw_id may be blank, in which case we need to find it.
+                # Assumption: if there is not lw_id, there must be a pms_security_id
+                secs = CoreDBSecurityRepository().get(pms_security_id=sec.attributes['pms_security_id'])
+                logging.info(f"Found {len(secs)} securities with pms_security_id {sec.attributes['pms_security_id']}")
+                if len(secs):
+                    lw_ids_to_remove.append(secs[0].lw_id)
 
-#     def get(self, security: Union[Security, None] = None) -> List[Security]:
-#         if security is not None:
-#             # Retrieve only from the single file
-#             sec_dict = get_read_model_content(read_model_name=self.read_model_name, file_name=f'{security.lw_id}.json')
-#             if sec_dict is None:
-#                 return None  # DNE yet
-#             else:
-#                 sec = Security.from_dict(sec_dict)
-#                 return [sec]
-#         else:
-#             # Retrieve all for the date
-#             res = []
-#             target_dir = get_read_model_folder(read_model_name=self.read_model_name)
-#             for dirpath, _, filenames in os.walk(target_dir):
-#                 # Ignore subfolders
-#                 if dirpath != target_dir:
-#                     continue
-                
-#                 for filename in filenames:
-#                     with open(filename, 'r') as f:
-#                         sec_dict = json.loads(f.read())
-#                         sec = Security.from_dict(sec_dict)
-#                     if sec is not None:
-#                         res.append(sec)
-#             return res
+        # Get existing SWPs, then remove items based on lw_id
+        existing_swps = self.get(data_date)
+        new_swps = [swp for swp in existing_swps if swp.security.lw_id not in lw_ids_to_remove]
+
+        # Now we have all SWPs which should still be in the repo. Create method should fully replace the old data:
+        return self.create(data_date, new_swps)
 
 
 class JSONSecurityWithPricesRepository(SecurityWithPricesRepository):
+    # TODO_CLEANUP: retire this class if not being used?
+
     read_model_name = 'security_with_prices'
 
     def create(self, swp: SecurityWithPrices) -> SecurityWithPrices:
@@ -357,6 +340,7 @@ class JSONSecurityWithPricesRepository(SecurityWithPricesRepository):
 
 
 class JSONPriceAuditEntryRepository(PriceAuditEntryRepository):
+    # TODO_CLEANUP: retire this class if not being used?
     def create(self, price_audit_entry: PriceAuditEntry) -> PriceAuditEntry:
         pass
 
@@ -387,4 +371,79 @@ class DataDirDateWithPricingAttachmentsRepository(DateWithPricingAttachmentsRepo
             attachment = PricingAttachment(name=f, full_path=os.path.join(target_dir, f))
             attachments.append(attachment)
         return DateWithPricingAttachments(data_date, attachments)
+
+
+class APXIMEXLatestLogFileRepository:
+    imex_log_folder_repo = APXDBIMEXLogFolderRepository()
+
+    def get(self, login: str=None) -> Tuple[str, str, list]:
+
+        # Get what folder contains the IMEX log files for this login
+        log_folder = self.imex_log_folder_repo.get(login)
+
+        # Find latest log file
+        latest_log_file = self.get_latest_log_file(log_folder)
+
+        # Now read that file 
+        with open(latest_log_file, 'r', encoding='utf-16-le') as f:
+            contents = f.read()
+
+        # Trim starting char of contents - expected as '\ufeff' byte-order-mark
+        contents = contents[1:]
+
+        # Get errors
+        logging.info(f'Searching the following IMEX log file for errors: {latest_log_file}')
+        errors = self.get_errors(contents)
+
+        # Return full path to log file, its contents, and any errors found
+        return (latest_log_file, contents, errors)  
+
+    def get_latest_log_file(self, log_folder: str) -> str:
+        # Initialize variables to store information about the most recent log file
+        most_recent_file = None
+        most_recent_timestamp = 0
+
+        # Regex pattern to identify IMEX log files
+        pattern = r'^\d{8}-\d{6}\.log$'
+
+        # Compile the regular expression pattern for efficiency
+        regex = re.compile(pattern)
+
+        # Iterate through files in the specified directory
+        for filename in os.listdir(log_folder):
+            # Check if the file matches the expected format using re.match
+            if not regex.match(filename):
+                continue
+            try:
+                timestamp = os.path.getmtime(os.path.join(log_folder, filename))
+                # Update the most recent file if necessary
+                if timestamp > most_recent_timestamp:
+                    most_recent_timestamp = timestamp
+                    most_recent_file = filename
+            except (ValueError, OSError):
+                continue
+
+        # If a most recent file was found, return its full path
+        if most_recent_file:
+            return os.path.join(log_folder, most_recent_file)
+        else:
+            return None
+
+    def get_errors(self, contents: str) -> list:
+
+        # Split into lines
+        logging.debug(f'Searching IMEX log file for errors... {contents}')
+        lines = contents.split('\n')
+        logging.debug(f'Split into {len(lines)} lines')
+
+        # Search for ERROR lines
+        errors = []
+        for line_num, line in enumerate(lines):
+            if line.startswith('ERROR'):
+                # Found error line! Append it along with the following line, which should contain 
+                # the error row from the file that was loaded via IMEX
+                logging.info(f'Found ERROR on line {line_num}: {line}')
+                errors.append(line + '\n' + lines[line_num+1])
+        
+        return errors
 

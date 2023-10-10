@@ -1,6 +1,7 @@
 
 # core python
 import copy
+from dataclasses import dataclass
 import datetime
 import logging
 import os
@@ -10,6 +11,7 @@ from typing import List, Optional, Tuple, Union
 # pypi
 import numpy as np
 import pandas as pd
+import pyodbc
 from sqlalchemy import exc, update, and_
 
 # native
@@ -22,8 +24,8 @@ from app.domain.models import (
 )
 from app.domain.repositories import (
     SecurityRepository, PriceRepository, PriceBatchRepository
-    , PriceFeedRepository, PriceFeedWithStatusRepository
-    , PriceAuditEntryRepository, PriceSourceRepository, PriceTypeRepository
+    , PriceFeedWithStatusRepository
+    , PriceAuditEntryRepository
     , PositionRepository, SecuritiesForDateRepository, SecurityWithPricesRepository
     , PortfolioRepository
 )
@@ -36,10 +38,12 @@ from app.infrastructure.sql_tables import (
     , CoreDBvwHeldSecurityView, CoreDBvwAPXAppraisalView
     , LWDBAPXAppraisalTable, LWDBPricingTable, CoreDBvwPortfolioView
     , APXDBvQbRowDefPositionView, APXDBvPortfolioView, APXDBAdvPositionTable
+    , CoreDBPositionTable, CoreDBPortfolioTable
 )
 from app.infrastructure.util.config import AppConfig
-from app.infrastructure.util.date import get_current_bday, get_previous_bday
+from app.infrastructure.util.date import format_time, get_current_bday, get_previous_bday
 from app.infrastructure.util.dataframe import add_is_deleted, add_modified
+from app.infrastructure.util.database import execute_multi_query, get_engine
 
 
 class UnexpectedRowCountException(Exception):
@@ -48,7 +52,7 @@ class UnexpectedRowCountException(Exception):
 
 class CoreDBSecurityRepository(SecurityRepository):
     def create(self, security: Security) -> Security:
-        pass  # TODO: implement
+        raise NotImplementedError("CoreDBSecurityRepository CREATE method not implemented!")
 
     def get(self, lw_id: Union[List[str],str,None] = None
             , pms_security_id: Union[List[int],int,None] = None) -> List[Security]:
@@ -63,12 +67,12 @@ class CoreDBSecurityRepository(SecurityRepository):
         
         # Trim to securities, if applicable
         if isinstance(lw_id, str):
-            query_result = query_result[query_result['lw_id'].equals(lw_id)]
+            query_result = query_result[query_result['lw_id'] == lw_id]
         elif isinstance(lw_id, list):
             query_result = query_result[query_result['lw_id'].isin(lw_id)]
         if isinstance(pms_security_id, int):
             logging.info(f'Filtering {len(query_result.index)} secs {query_result.columns} for PMS sec ID {pms_security_id}')
-            query_result = query_result[query_result['pms_security_id'].equals(pms_security_id)]
+            query_result = query_result[query_result['pms_security_id'] == pms_security_id]
         elif isinstance(pms_security_id, list):
             query_result = query_result[query_result['pms_security_id'].isin(pms_security_id)]
 
@@ -168,7 +172,7 @@ class CoreDBColumnConfigRepository(UserWithColumnConfigRepository):
 
 class CoreDBPriceRepository(PriceRepository):
     def create(self, prices: Union[List[Price], Price]) -> Union[List[Price], Price]:
-        pass
+        raise NotImplementedError("CoreDBPriceRepository CREATE method not implemented! Maybe use LWDBPriceRepository?")
 
     def get(self, data_date: datetime.date, source: Union[PriceSource,None]=None
             , security: Union[List[Security],Security,None]=None) -> List[Price]:
@@ -211,13 +215,13 @@ class LWDBPriceRepository(PriceRepository):
     def create(self, prices: Union[List[Price], Price]) -> Union[List[Price], Price]:
         if isinstance(prices, Price):
             # Need to convert to List in order to loop thru
-            _prices = copy.deepcopy(prices)
+            _prices = [copy.deepcopy(prices)]
         else:
             _prices = [copy.deepcopy(px) for px in prices]
                 
         # Rotate scenario
         table = LWDBPricingTable()
-        table.base_scenario = AppConfig().get('lwdb', 'pricing_base_scenario', fallback='LW_SEC_PRICING')
+        table.base_scenario = AppConfig().parser.get('lwdb', 'pricing_base_scenario', fallback='LW_SEC_PRICING')
         
         for px in _prices:
             # We want to rotate for each source and security combo separately.
@@ -274,12 +278,12 @@ class LWDBPriceRepository(PriceRepository):
 
     def get(self, data_date: datetime.date, source: Union[PriceSource,None]=None
             , security: Union[Security,None]=None) -> List[Price]:
-        pass
+        raise NotImplementedError("LWDBPriceRepository GET method not implemented! Maybe use CoreDBPriceRepository?")
 
 
 class CoreDBPriceBatchRepository(PriceBatchRepository):
     def create(self, price: PriceBatch) -> PriceBatch:
-        pass
+        raise NotImplementedError("CoreDBPriceBatchRepository CREATE method not implemented!")
 
     def get(self, data_date: Union[datetime.date,None]=None
             , source: Union[PriceSource,None]=None) -> List[PriceBatch]:
@@ -291,8 +295,8 @@ class CoreDBPriceBatchRepository(PriceBatchRepository):
         batches = [PriceBatch.from_dict(qrd) for qrd in query_result_dicts]
 
         # Translate price sources and return
-        for pb in batches:
-            pass  # pb.source = self.translate_price_source(pb.source)
+        # for pb in batches:
+        #     pass  # pb.source = self.translate_price_source(pb.source)
         return batches
 
     def translate_price_source(self, source: PriceSource) -> PriceSource:
@@ -322,7 +326,7 @@ class CoreDBPriceBatchRepository(PriceBatchRepository):
 
 class LWDBAPXAppraisalPositionRepository(PositionRepository):
     def create(self, position: Position) -> Position:
-        pass  # Not needed to implement here, we think...
+        raise NotImplementedError("LWDBAPXAppraisalPositionRepository CREATE method not implemented!")
 
     def get(self, data_date: datetime.date) -> List[Position]:  # TODO: support portfolio and/or security?
         query_result = LWDBAPXAppraisalTable().read_for_date(data_date)
@@ -338,21 +342,13 @@ class LWDBAPXAppraisalPositionRepository(PositionRepository):
         unique_lw_ids = set(lw_ids)
         unique_secs = [Security(lw_id) for lw_id in unique_lw_ids]
         return unique_secs
-
-
-class MGMTDBPriceFeedRepository(PriceFeedRepository):  # TODO: is this needed?
-    def create(self, price_feed: MGMTDBPriceFeed) -> MGMTDBPriceFeed:
-        pass
-
-    def get(self, name: str) -> List[PriceFeed]:
-        pass
-
+        
 
 class MGMTDBPriceFeedWithStatusRepository(PriceFeedWithStatusRepository):
     price_feed_class = MGMTDBPriceFeed
 
     def create(self, price_feed_with_status: PriceFeedWithStatus) -> PriceFeedWithStatus:
-        pass  # TODO: implement
+        raise NotImplementedError("MGMTDBPriceFeedWithStatusRepository CREATE method not implemented!")
 
     def get(self, data_date: datetime.date, feeds: List[PriceFeed]) -> List[PriceFeedWithStatus]:
         result = []
@@ -364,24 +360,62 @@ class MGMTDBPriceFeedWithStatusRepository(PriceFeedWithStatusRepository):
             result.append(feed_with_status)
         return result
 
-    # def to_dict(self, feeds_with_statuses: List[MGMTDBPriceFeedWithStatus]) -> List[dict]:
-        # TODO_CLEANUP: remove when not needed... 
-        # result = {}
-        # for fr in feeds_with_statuses:
-        #     result[fr.feed.name] = {
-        #         'status': fr.status,
-        #         'asofdate': fr.status_ts.isoformat(),
-        #         'normal_eta': fr.feed.get_normal_eta(fr.data_date).isoformat(),
-        #         'security_type': fr.feed.security_type,
-        #     }
-        # return result
-
 
 class CoreDBPriceAuditEntryRepository(PriceAuditEntryRepository):
-    def create(self, price_audit_entry: PriceAuditEntry) -> PriceAuditEntry:
-        pass
+    def create(self, price_audit_entries: Union[List[PriceAuditEntry],PriceAuditEntry]) -> PriceAuditEntry:
+        if isinstance(price_audit_entries, PriceAuditEntry):
+            # Need to convert to List in order to loop thru
+            _price_audit_entries = [copy.deepcopy(price_audit_entries)]
+        else:
+            _price_audit_entries = [copy.deepcopy(ae) for ae in price_audit_entries]
+
+        table = CoreDBPriceAuditEntryTable()
+
+        # Loop through and populate list of dicts
+        res = []
+        for ae in _price_audit_entries:
+            # Take advantage of domain model class to_dict, since it is a good
+            # starting point for the dict format we need to insert into the table
+            ae_dict = ae.to_dict()
+
+            # Dict will contain "before" and "after" items, which contain the dict representations
+            # of the "before" and "after Prices. See domain models to_dict methods.
+            # Therefore we need to extract the "before" and "after" Prices' fields for inserting into
+            # the corresponding DB columns.
+
+            # Start with the before and after PriceSource
+            ae_dict['source_before'] = ae.before.source.name
+            ae_dict['source_after'] = ae.after.source.name
+
+            # Loop through PriceValues for before & after and add to top level of dict
+            for pv in ae.before.values:
+                if pv.type_.name in ('price', 'yield'):
+                    pv.type_.name += '_bid'  # Because the column names are price_bid_before and yield_bid_before
+                ae_dict[f'{pv.type_.name}_before'] = pv.value
+            for pv in ae.after.values:
+                if pv.type_.name in ('price', 'yield'):
+                    pv.type_.name += '_bid'  # Because the column names are price_bid_before and yield_bid_before
+                ae_dict[f'{pv.type_.name}_after'] = pv.value
+
+            res.append(ae_dict)
+
+        # Convert to df and supplement with standard cols:
+        df = pd.DataFrame(res)
+        df = add_modified(df)
+        logging.info(f"CoreDBPriceAuditEntryRepository: About to insert {df.columns}\n{df}")
+        res = table.bulk_insert(df)  # TODO: error handling?
+        if isinstance(res, int):
+            row_cnt = res
+        else:
+            row_cnt = res.rowcount
+        if row_cnt != len(_price_audit_entries):
+            raise UnexpectedRowCountException(f"Expected {len(_price_audit_entries)} rows to be saved, but there were {row_cnt}!")
+        return row_cnt
+
 
     def get(self, data_date: Union[datetime.date,None]=None, security: Union[List[Security],Security,None]=None) -> List[PriceAuditEntry]:
+        # TODO: rewrite this to take advantage of domain.models.PriceAuditEntry.from_dict?
+
         query_result = CoreDBPriceAuditEntryTable().read(data_date)
         
         # Trim to securities, if applicable
@@ -435,12 +469,6 @@ class CoreDBSecurityWithPricesRepository(SecurityWithPricesRepository):
     # e.g. pulling 'PXAPX' prices specifically for prev bday prices is more an application layer decision
 
     def create(self, security_with_prices: SecurityWithPrices) -> SecurityWithPrices:
-        pass
-
-    def add_price(self, price: Price, mode='curr') -> SecurityWithPrices:
-        pass
-
-    def add_security(self, data_date: datetime.date, security: Security) -> SecurityWithPrices:
         pass
 
     def get(self, data_date: datetime.date, security: Union[List[Security],Security,None]=None) -> List[SecurityWithPrices]:
@@ -535,6 +563,30 @@ class CoreDBSecurityWithPricesRepository(SecurityWithPricesRepository):
             return source
 
 
+class CoreDBPositionRepository(PositionRepository):
+    def create(self, position: Position) -> Position:
+        raise NotImplementedError("CoreDBPositionRepository: please use upsert method rather than create")
+
+    def get(self, data_date: Union[datetime.date,None], security: Union[Security,None], portfolio: Union[Portfolio,None]) -> List[Position]:
+        raise NotImplementedError("CoreDBPositionRepository: get method is not implemented!")
+
+    def upsert(self, position: Position, is_deleted: bool=False, pk_column_name: str='pms_position_id') -> Position:
+        coredb_position_dict = {
+            'pms_position_id'	: position.attributes['pms_position_id'],
+            'pms_portfolio_id'  : position.portfolio.attributes['pms_portfolio_id'],
+            'pms_security_id'	: position.security.attributes['pms_security_id'],
+            'is_short'			: position.is_short,
+            'quantity'			: position.quantity,
+            'modified_at'		: format_time(datetime.datetime.now()),
+            'modified_by'		: os.path.basename(__file__),
+            'is_deleted'        : is_deleted
+        }
+
+        # Execute upsert and return row count
+        upsert_res = CoreDBPositionTable().upsert(pk_column_name, coredb_position_dict)
+        return upsert_res.rowcount
+
+
 class CoreDBHeldSecurityRepository(SecuritiesForDateRepository):
     def create(self, data_date: datetime.date, security: Union[Security, List[Security]]) -> int:
         pass  # Not needed to implement here, we think...
@@ -555,6 +607,19 @@ class CoreDBHeldSecurityRepository(SecuritiesForDateRepository):
         return secs
 
 
+class CoreDBLiveHeldSecurityRepository(SecurityRepository):
+    def create(self, data_date: datetime.date, security: Union[Security, List[Security]]) -> int:
+        pass  # Not needed to implement here, we think...
+
+    def get(self, lw_id: Union[list, str, None], pms_security_id: Union[list, int, None]) -> List[Security]:
+        # Query the view. Assumption is the below read method accepts list/str/int/None for its params
+        query_result = CoreDBvwHeldSecurityView().read(lw_id=lw_id, pms_security_id=pms_security_id)
+        secs = [Security(sec['lw_id'], sec) for sec in query_result.to_dict('records')]
+
+        # Return resulting Securities list
+        return secs
+
+
 class CoreDBPortfolioRepository(PortfolioRepository):
     def create(self, portfolio: Portfolio) -> Portfolio:
         pass  # Not needed to implement here, we think...
@@ -566,21 +631,18 @@ class CoreDBPortfolioRepository(PortfolioRepository):
         portfs = [Portfolio(portf['portfolio_code'], portf) for portf in query_result.to_dict('records')]
         return portfs
 
+    def upsert(self, portfolio: Portfolio, pk_column_name: str='portfolio_code') -> int:
+        coredb_portfolio_dict = {
+            'portfolio_code'	: portfolio.portfolio_code,
+            'pms_portfolio_id'  : portfolio.attributes['pms_portfolio_id'],
+            'portfolio_type'    : portfolio.attributes['portfolio_type'],
+            'modified_at'		: format_time(datetime.datetime.now()),
+            'modified_by'		: os.path.basename(__file__)
+        }
 
-class CoreDBPriceSourceRepository(PriceSourceRepository):
-    def create(self, price_source: PriceSource) -> PriceSource:
-        pass
-
-    def get(self, name: str) -> List[PriceSource]:
-        pass
-
-
-class APXDBPriceTypeRepository(PriceTypeRepository):
-    def create(self, price_type: PriceType) -> PriceType:
-        pass
-
-    def get(self, name: str) -> List[PriceType]:
-        pass
+        # Execute upsert and return row count
+        upsert_res = CoreDBPortfolioTable().upsert(pk_column_name, coredb_portfolio_dict)
+        return upsert_res.rowcount
 
 
 class APXDBHeldSecurityRepository(SecurityRepository):
@@ -651,6 +713,109 @@ class APXDBPortfolioRepository(PortfolioRepository):
         
         # Finally, return
         return res
+
+
+class APXDBIMEXLogFolderRepository:
+    def get(self, login: str=None) -> str:
+
+        # Populate login if not provided explicitly
+        if login is None:
+            login = os.getlogin()
+
+        # Build query, based on login
+        query = f"""
+            select u.Login, pp.PropertyValue
+            from APXFirm.dbo.AdvPortfolioProperty as pp
+            join APXFirm.AdvApp.vPortfolioBaseCustomLabels as l
+                on l.PortfolioBaseID = pp.PortfolioBaseID
+            join APXFirm.AdvApp.vUser as u
+                on u.DefaultConfigurationID = pp.PortfolioBaseID
+            where l.Label in ('$pathlog')
+            and (u.login = '{login}' 
+                or '{login}' = case
+					when CHARINDEX('\\', u.login) > 0 then RIGHT(u.login, CHARINDEX('\\', REVERSE(u.login)) - 1)
+					else '' end)
+        """
+
+        # Get pyodbc connection and execute the query using it
+        sqlalchemy_engine = get_engine(config_section='apx_imex')
+        conn = sqlalchemy_engine.raw_connection()
+        results = execute_multi_query(conn, query)
+        conn.close()
+        log_folders = results[0]
+
+        # Ensure there is exactly one row for the login... if not, throw exception
+        if log_folders.shape[0] != 1:
+            raise UnexpectedRowCountException(f'APXDBIMEXLogFolderRepository: Expected 1 row for {login} but found {log_folders.shape[0]}!')
+
+        # Now get the one row for the requested login, and return
+        log_folder = log_folders.iloc[0]['PropertyValue']
+        return log_folder
+
+
+""" Universal """
+@dataclass
+class SQLServerDBLockRepository:
+    config_section: str
+    lock_name: str
+    db_principal: str = 'public'
+    lock_mode: str = 'Exclusive'
+    lock_owner: str = 'Session'
+    lock_timeout_ms = 10000
+
+    def get_pyodbc_conn(self):
+        sqlalchemy_engine = get_engine(config_section=self.config_section)
+        conn = sqlalchemy_engine.raw_connection()
+        return conn
+
+    def is_lock_available(self):
+        """
+        Check whether lock is available
+
+        :returns: Whether the lock is available
+        """
+        query = f"""
+            SELECT applock_test('{self.db_principal}', '{self.lock_name}', '{self.lock_mode}', '{self.lock_owner}')
+        """
+        conn = self.get_pyodbc_conn()
+        results = execute_multi_query(conn, query)
+        return bool(results[0].iloc[0, 0])
+
+    def acquire_lock(self):
+        """
+        Acquire a DB lock
+
+        :returns: Whether the lock was successfully granted
+        """
+        query = f"""
+            DECLARE @lock_result AS int; 
+            exec @lock_result = sp_getapplock @Resource = '{self.lock_name}', @LockMode = '{self.lock_mode}'
+                , @LockOwner = '{self.lock_owner}', @LockTimeout = {self.lock_timeout_ms}, @DbPrincipal = '{self.db_principal}'; 
+            SELECT @lock_result 
+        """
+        conn = self.get_pyodbc_conn()
+        results = execute_multi_query(conn, query)
+        return results[0].iloc[0, 0] == 0
+
+    def release_lock(self):
+        """
+        Release a session lock
+
+        :returns: Whether the lock was sucessfully released
+        """
+        query = f"""
+            DECLARE @lock_result AS int; 
+            exec @lock_result = sp_releaseapplock @Resource = '{self.lock_name}'
+                , @LockOwner = '{self.lock_owner}', @DbPrincipal = '{self.db_principal}'; 
+            SELECT @lock_result 
+        """
+        conn = self.get_pyodbc_conn()
+        try:
+            results = execute_multi_query(conn, query)
+        except pyodbc.Error:  # as ex:
+            return False  # Failed to release lock
+        return results[0].iloc[0, 0] == 0
+
 
 
 

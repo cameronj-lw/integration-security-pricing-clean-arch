@@ -60,14 +60,6 @@ class SecurityWithPricesRepository(ABC):
         pass
 
     @abstractmethod
-    def add_price(self, price: Price, mode='curr') -> SecurityWithPrices:
-        pass
-
-    @abstractmethod
-    def add_security(self, data_date: datetime.date, security: Security) -> SecurityWithPrices:
-        pass
-
-    @abstractmethod
     def get(self, data_date: datetime.date, security: Union[List[Security],Security,None]=None) -> List[SecurityWithPrices]:
         pass
 
@@ -106,16 +98,6 @@ class PortfolioRepository(ABC):
         pass  # subclasses may implement specific args
 
 
-class PriceFeedRepository(ABC):  # TODO: is this needed?
-    @abstractmethod
-    def create(self, price_feed: PriceFeed) -> PriceFeed:
-        pass
-
-    @abstractmethod
-    def get(self, name: str) -> List[PriceFeed]:
-        pass
-
-
 class PriceFeedWithStatusRepository(ABC):
     @abstractmethod
     def create(self, price_feed_with_status: PriceFeedWithStatus) -> PriceFeedWithStatus:
@@ -132,27 +114,7 @@ class PriceAuditEntryRepository(ABC):
         pass
 
     @abstractmethod
-    def get(self, data_date: datetime.date, security: Security) -> List[PriceAuditEntry]:
-        pass
-
-
-class PriceSourceRepository(ABC):
-    @abstractmethod
-    def create(self, price_source: PriceSource) -> PriceSource:
-        pass
-
-    @abstractmethod
-    def get(self, name: str) -> List[PriceSource]:
-        pass
-
-
-class PriceTypeRepository(ABC):
-    @abstractmethod
-    def create(self, price_type: PriceType) -> PriceType:
-        pass
-
-    @abstractmethod
-    def get(self, name: str) -> List[PriceType]:
+    def get(self, data_date: Union[datetime.date,None]=None, security: Union[Security,None]=None) -> List[PriceAuditEntry]:
         pass
 
 

@@ -23,7 +23,7 @@ class PriceFeedWithStatusQueryHandler:
 
     def get_relevant_pricing_feeds(self):
         """ Get list of pricing feeds which are relevant """
-        unparsed = AppConfig().get("app", "vendor_price_sources")
+        unparsed = AppConfig().parser.get("app", "vendor_price_sources")
         parsed = [feed.strip() for feed in unparsed.split(',')]
         return [self.repo.price_feed_class(f) for f in parsed]
 
@@ -62,7 +62,7 @@ class PriceAuditEntryQueryHandler:
         """ Handle the query """
         try:
             date = datetime.datetime.strptime(data_date, '%Y%m%d').date()
-        except Exception as e:
+        except Exception:  # as e:
             # TODO: application error handling for invalid date?
             pass  # exception should be caught by interface layer
         return self.repo.get(date)
@@ -94,7 +94,7 @@ class PricingAttachmentByDateQueryHandler:
         """ Handle the query """
         try:
             date = datetime.datetime.strptime(data_date, '%Y%m%d').date()
-        except Exception as e:
+        except Exception:  # as e:
             # TODO: application error handling for invalid date?
             pass  # exception should be caught by interface layer
         return self.repo.get(date)
@@ -110,7 +110,7 @@ class PriceCountBySourceQueryHandler:
         try:
             data_date = datetime.date.today() if 'price_date' not in payload else (
                     datetime.datetime.strptime(payload['price_date'], '%Y%m%d').date())
-        except Exception as e:
+        except Exception:  # as e:
             # TODO: application error handling for invalid date?
             pass  # exception should be caught by interface layer
         
@@ -158,7 +158,7 @@ class HeldSecurityPriceQueryHandler:
         try:
             data_date = datetime.date.today() if 'price_date' not in payload else (
                     datetime.datetime.strptime(payload['price_date'], '%Y%m%d').date())
-        except Exception as e:
+        except Exception:  # as e:
             # TODO: application error handling for invalid date?
             pass  # exception should be caught by interface layer
         
@@ -179,12 +179,28 @@ class HeldSecurityPriceQueryHandler:
                 if chosen_price is None:
                     # No chosen price -> should include only in 'MISSING':
                     if source_name == 'MISSING':
-                        res.append(swp.to_dict())
+                        swp_dict = swp.to_dict()
+                        # Need to first replace audit_trail which are empty arrays with None, per Verve #5146
+                        # TODO: could the front-end be changed to work with an empty array rather than requiring null if empty?
+                        if 'audit_trail' in swp_dict:
+                            if isinstance(swp_dict['audit_trail'], list):
+                                if not len(swp_dict['audit_trail']):
+                                    swp_dict['audit_trail'] = None
+                        # Now can append to the master list of dicts
+                        res.append(swp_dict)
                     continue
                 elif chosen_price.source.name != source_name:
                     continue
             # If we reached here, the SWP should be included. Add it to results:
-            res.append(swp.to_dict())
+            swp_dict = swp.to_dict()
+            # Need to first replace audit_trail which are empty arrays with None, per Verve #5146
+            # TODO: could the front-end be changed to work with an empty array rather than requiring null if empty?
+            if 'audit_trail' in swp_dict:
+                if isinstance(swp_dict['audit_trail'], list):
+                    if not len(swp_dict['audit_trail']):
+                        swp_dict['audit_trail'] = None
+            # Now can append to the master list of dicts
+            res.append(swp_dict)
         
         logging.info(f'HeldSecurityPrice returning {len(res)} rows')
         return res

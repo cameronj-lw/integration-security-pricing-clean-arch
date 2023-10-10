@@ -13,7 +13,7 @@ from app.domain.models import (
 
 
 class Event(ABC):
-    pass
+    """ Base class for domain events """
 
 
 @dataclass
@@ -37,16 +37,6 @@ class SecurityCreatedEvent(Event):
 
 
 @dataclass
-class PriceAuditEntryCreatedEvent(Event):
-    entry: PriceAuditEntry
-
-
-@dataclass
-class SecurityWithPricesCreatedEvent(Event):
-    security_with_prices: SecurityWithPrices
-
-
-@dataclass
 class PortfolioCreatedEvent(Event):
     portfolio: Portfolio
 
@@ -59,24 +49,4 @@ class PositionCreatedEvent(Event):
 @dataclass
 class PositionDeletedEvent(Event):
     position: Position
-
-
-@dataclass
-class PriceFeedCreatedEvent(Event):  # TODO: maybe don't need this?
-    price_feed: PriceFeed
-
-
-@dataclass
-class PriceFeedWithStatusCreatedEvent(Event):
-    price_feed_with_status: PriceFeedWithStatus
-
-
-@dataclass
-class PriceSourceCreatedEvent(Event):  # TODO: maybe don't need this?
-    price_source: PriceSource
-
-
-@dataclass
-class PriceTypeCreatedEvent(Event):  # TODO: maybe don't need this?
-    price_type: PriceType
     

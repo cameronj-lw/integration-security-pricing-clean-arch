@@ -43,9 +43,9 @@ class DefaultRESTFormatter:
             }, 200
 
     def exception(self, e: Exception, http_return_code: int=500) -> Tuple[dict, int]:
-        logging.exception(e)
+        logging.exception(f'Returning {http_return_code} due to {type(e).__name__}: {e}')
         return {
-            'data': None,
+            'data': f'{type(e).__name__}: {e}',
             'message': f'{type(e).__name__}: {e}',
             'status': 'error', 
         }, http_return_code

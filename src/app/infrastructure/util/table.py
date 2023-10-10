@@ -81,14 +81,15 @@ class BaseTable(object):
         """
         return self.table_def.c
 
-    def execute_write(self, sql_stmt):
+    def execute_write(self, sql_stmt, commit=None):
         """
         Syntactic sugar to aviod table.database.execute...
 
         :param sql_stmt: Statement to execute
+        :param commit: Whether to commit. If not provided, see database.py::execute_write
         :returns: A sqlalchemy.engine.ResultProxy
         """
-        return self._database.execute_write(sql_stmt)
+        return self._database.execute_write(sql_stmt, commit=commit)
 
     def execute_read(self, sql_stmt):
         """
@@ -117,6 +118,9 @@ class BaseTable(object):
         :param df: A data frame of rows to insert
         :returns: Pyodbc result object
         """
+
+        # Filter df columns to columns which exist in the table, to avoid SQL error from inserting a column which DNE
+        df = df[df.columns.intersection(self.c.keys())]
 
         num_rows = df.shape[0]
         res_rows = df.to_sql(self.table_name, self._database.engine, self.schema, if_exists='append', index=False)
@@ -191,6 +195,43 @@ class BaseTable(object):
         # os.system(f'copy {file_path} L:\\temp\\CJ20230419.txt')
         os.remove(file_path)
         return result
+
+    def upsert(self, pk_column_name: str, data: dict):
+        """
+        Update if row matching pk_column_name exists, else insert
+
+        :param pk_column_name: Name of column to check whether row(s) already exist.
+                Assumption: this key exists in data dict, and is a column in the table
+        :returns: A sqlalchemy.engine.ResultProxy
+        """
+        # Perform a select to check if the row already exists
+        pk_column = getattr(self.table_def.c, pk_column_name)
+        if sqlalchemy.__version__ >= '2':
+            select_stmt = sql.select(self.table_def)
+        else:
+            select_stmt = sql.select([self.table_def])
+        select_stmt = select_stmt.where(pk_column == data[pk_column_name])
+        select_res = self.execute_read(select_stmt)
+
+        # If so, build update stmt
+        if len(select_res.index):
+            if sqlalchemy.__version__ >= '2':
+                stmt = sql.update(self.table_def)
+            else:
+                stmt = sql.update([self.table_def])
+            stmt = stmt.where(pk_column == data[pk_column_name])
+            stmt = stmt.values(**data)
+        else:  # If DNE, build insert stmt
+            if sqlalchemy.__version__ >= '2':
+                stmt = sql.insert(self.table_def)
+            else:
+                stmt = sql.insert([self.table_def])
+
+        # Whether it is an update or insert, we need to provide the values
+        stmt = stmt.values(**data)
+        
+        # Execute stmt and return result
+        return self.execute_write(stmt)
 
 
 class ScenarioTable(BaseTable):

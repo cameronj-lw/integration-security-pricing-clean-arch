@@ -61,6 +61,10 @@ class PriceSchema(Schema):
 class PriceByIMEXPayloadSchema(Schema):
     prices = fields.List(fields.Nested(PriceSchema), required=True)
 
+class IMEXPayloadSchema(Schema):
+    mode = fields.String(required=True)
+    full_path = fields.String(required=True)
+
 class PriceByIMEXSchema(Schema):
     payload = fields.Nested(PriceByIMEXPayloadSchema)
 

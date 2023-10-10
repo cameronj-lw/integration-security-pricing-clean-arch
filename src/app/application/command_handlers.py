@@ -2,7 +2,9 @@
 # core python
 from dataclasses import dataclass
 import datetime
+import dateutil.parser
 import logging
+import re
 from typing import List, Union
 
 # native
@@ -10,22 +12,16 @@ from app.application.models import ColumnConfig, UserWithColumnConfig, PricingAt
 from app.application.repositories import UserWithColumnConfigRepository, DateWithPricingAttachmentsRepository
 from app.application.validators import (
     LWIDSchema, ColumnConfigPayloadSchema, FilePayloadSchema, PriceByIMEXSchema
+    # TODO: audit trail schema validator
 )
 
-from app.domain.event_publishers import EventPublisher
-from app.domain.events import (
-    SecurityCreatedEvent, PriceCreatedEvent,
-    SecurityWithPricesCreatedEvent, PriceFeedCreatedEvent,
-    PriceFeedWithStatusCreatedEvent, PriceAuditEntryCreatedEvent,
-    PriceSourceCreatedEvent, PriceTypeCreatedEvent
-)
 from app.domain.models import (
     Security, Price, SecurityWithPrices, PriceFeed,
     PriceFeedWithStatus, PriceAuditEntry, PriceSource, PriceType
 )
 from app.domain.repositories import (
-    SecurityRepository, PriceRepository, SecurityWithPricesRepository, PriceFeedRepository,
-    PriceFeedWithStatusRepository, PriceAuditEntryRepository, PriceSourceRepository, PriceTypeRepository
+    SecurityRepository, PriceRepository, SecurityWithPricesRepository,
+    PriceFeedWithStatusRepository, PriceAuditEntryRepository
 )
 
 
@@ -57,7 +53,7 @@ class SecurityCommandHandler:
         # Validate payload. If no exception is thrown here, it passed.
         try:
             validate_payload(payload, LWIDSchema())
-        except InvalidPayloadException as e:
+        except InvalidPayloadException:  # as e:
             # TODO_SUPPORT: logging? alerting?
             pass  # Exception should be caught by interface layer
         
@@ -81,8 +77,8 @@ class SecurityCommandHandler:
         """
         # Validate payload. If no exception is thrown here, it passed.
         try:
-            validate_payload(payload, ManualPricingSecuritySchema())
-        except InvalidPayloadException as e:
+            validate_payload(payload, LWIDSchema())
+        except InvalidPayloadException:  # as e:
             # TODO_SUPPORT: logging? alerting?
             pass  # Exception should be caught by interface layer
         
@@ -112,7 +108,7 @@ class UserWithColumnConfigCommandHandler:
         # Validate payload. If no exception is thrown here, it passed.
         try:
             validate_payload(payload, ColumnConfigPayloadSchema())
-        except InvalidPayloadException as e:
+        except InvalidPayloadException:  # as e:
             # TODO_SUPPORT: logging? alerting?
             pass  # Exception should be caught by interface layer
         
@@ -141,8 +137,8 @@ class UserWithColumnConfigCommandHandler:
         """
         # Validate payload. If no exception is thrown here, it passed.
         try:
-            validate_payload(payload, ManualPricingSecuritySchema())
-        except InvalidPayloadException as e:
+            validate_payload(payload, LWIDSchema())
+        except InvalidPayloadException:  # as e:
             # TODO_SUPPORT: logging? alerting?
             pass  # Exception should be caught by interface layer
         
@@ -171,14 +167,14 @@ class PricingAttachmentByDateCommandHandler:
         """
         try:
             date = datetime.datetime.strptime(data_date, '%Y%m%d').date()
-        except Exception as e:
+        except Exception:  # as e:
             # TODO: application error handling for invalid date?
             pass  # exception should be caught by interface layer
         
         # Validate payload. If no exception is thrown here, it passed.
         try:
             validate_payload(payload, FilePayloadSchema())
-        except InvalidPayloadException as e:
+        except InvalidPayloadException:  # as e:
             # TODO_SUPPORT: logging? alerting?
             pass  # Exception should be caught by interface layer
         
@@ -213,7 +209,7 @@ class PriceByIMEXCommandHandler:
         # Validate payload. If no exception is thrown here, it passed.
         try:
             validate_payload(payload, PriceByIMEXSchema())
-        except InvalidPayloadException as e:
+        except InvalidPayloadException:  # as e:
             # TODO_SUPPORT: logging? alerting?
             pass  # Exception should be caught by interface layer
         
@@ -246,3 +242,44 @@ class PriceByIMEXCommandHandler:
         
         return row_cnt
 
+
+@dataclass
+class PriceAuditEntryCommandHandler:
+    # We'll save the audit trail to here:
+    audit_entry_repo: PriceAuditEntryRepository
+
+    def handle_post(self, data_date, payload):
+        """ Handle a POST command.
+
+        Args:
+        - data_date (datetime.date): Which date these audit trails are for.
+        - payload (list or dict): Payload to handle.
+
+        Returns:
+        - int: Number of items which were saved (e.g. row count, file saved count).
+        """
+        # TODO: validate payload?
+
+        # Payload will be a list, containing dicts representing audit trail entries. Convert to PriceAuditEntries:
+        logging.debug(f"Parsing {payload}")
+        audit_entries = []
+        # Loop thru as we may need to replace some fields: 
+        for ae_dict in payload['audit_trail']:
+
+            logging.info(f'PriceAuditEntryCommandHandler processing {ae_dict}')
+            
+            # Need to add the data_date to the dict in order to create the PriceAuditEntry - the from_dict should expect it in ISO format:
+            ae_dict['data_date'] = data_date.isoformat()
+
+            # May need to make into ISO-parsable datetime:
+            if 'asofdate' in ae_dict:
+                ae_dict['asofdate'] = dateutil.parser.isoparse(ae_dict['asofdate']).isoformat()
+            if 'modified_at' in ae_dict:
+                ae_dict['modified_at'] = dateutil.parser.isoparse(ae_dict['modified_at']).isoformat()
+
+            # Create PriceAuditEntry and append to list
+            ae = PriceAuditEntry.from_dict(ae_dict)
+            audit_entries.append(ae)
+
+        row_cnt = self.audit_entry_repo.create(audit_entries)
+        return row_cnt

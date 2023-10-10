@@ -12,8 +12,6 @@ import sys
 
 # Append to pythonpath
 src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-src_dir = src_dir.replace('C:\\', f'\\\\WS215\\c$\\', 1)  
-# TODO: remove above once running local files
 sys.path.append(src_dir)
 
 # native
@@ -28,7 +26,6 @@ from domain.events import (
     , PositionCreatedEvent, PortfolioCreatedEvent
 )
 
-# from infrastructure.event_handlers import KafkaEventHandler  # TODO_CLEANUP: remove when not needed
 from infrastructure.event_publishers import (
     KafkaCoreDBPositionEventProducer, KafkaCoreDBPortfolioCreatedEventProducer
 )
@@ -39,11 +36,10 @@ from infrastructure.file_repositories import (
     JSONHeldSecuritiesRepository, JSONHeldSecuritiesWithPricesRepository, JSONSecurityWithPricesRepository
 )
 from infrastructure.sql_repositories import (
-    CoreDBPriceRepository, CoreDBSecurityRepository
+    CoreDBPriceRepository, CoreDBSecurityRepository, CoreDBPortfolioRepository
     , LWDBAPXAppraisalPositionRepository
-    , CoreDBPriceBatchRepository
-    , CoreDBPriceAuditEntryRepository
-    , CoreDBPriceAuditEntryRepository
+    , CoreDBPriceBatchRepository, CoreDBPositionRepository
+    , CoreDBPriceAuditEntryRepository, CoreDBLiveHeldSecurityRepository
     , APXDBLivePositionRepository, APXDBPortfolioRepository
 )
 from infrastructure.util.config import AppConfig
@@ -97,7 +93,10 @@ def main():
     elif args.data_type == 'position':
         positions = APXDBLivePositionRepository().get() 
         event_handler = PositionEventHandler(
-                position_event_publisher = KafkaCoreDBPositionEventProducer()
+            position_repo = CoreDBPositionRepository()
+            , security_repo = CoreDBSecurityRepository()
+            , held_securities_repo = CoreDBLiveHeldSecurityRepository()
+            , held_securities_with_prices_repo = JSONHeldSecuritiesWithPricesRepository()
         )
         setup_logging(args.log_level)
         logging.info(f'Processing {len(positions)} positions...')
@@ -107,7 +106,7 @@ def main():
     elif args.data_type == 'portfolio':
         portfolios = APXDBPortfolioRepository().get() 
         event_handler = PortfolioCreatedEventHandler(
-                portfolio_event_publisher = KafkaCoreDBPortfolioCreatedEventProducer()
+            portfolio_repo = CoreDBPortfolioRepository()
         )
         setup_logging(args.log_level)
         logging.info(f'Processing {len(portfolios)} portfolios...')
@@ -117,7 +116,6 @@ def main():
     else:
         logging.error(f"Unconfigured data_type: {args.data_type}!")
         return 1
-
 
 
 if __name__ == '__main__':

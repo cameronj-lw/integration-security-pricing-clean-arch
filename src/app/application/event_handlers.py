@@ -9,21 +9,18 @@ from typing import Union
 from app.domain.event_handlers import EventHandler
 from app.domain.event_publishers import EventPublisher
 from app.domain.events import (
-    SecurityCreatedEvent, PriceCreatedEvent, PriceBatchCreatedEvent,
+    SecurityCreatedEvent, PriceBatchCreatedEvent,
     AppraisalBatchCreatedEvent,
-    SecurityWithPricesCreatedEvent, PriceFeedCreatedEvent,
-    PriceFeedWithStatusCreatedEvent, PriceAuditEntryCreatedEvent,
-    PriceSourceCreatedEvent, PriceTypeCreatedEvent,
     PortfolioCreatedEvent, PositionCreatedEvent, PositionDeletedEvent
 )
 from app.domain.models import (
     Security, Price, SecurityWithPrices, PriceFeed,
-    PriceFeedWithStatus, PriceAuditEntry, PriceSource, PriceType
+    PriceAuditEntry, PriceSource
 )
 from app.domain.repositories import (
     PriceRepository, SecurityRepository, SecurityWithPricesRepository,
-    SecuritiesWithPricesRepository, PositionRepository,
-    SecuritiesForDateRepository, PriceAuditEntryRepository
+    SecuritiesWithPricesRepository, PositionRepository, PortfolioRepository,
+    PriceAuditEntryRepository
 )
 # TODO_DEPENDENCY: do dependency injection instead - app layer should not depend on infra layer
 from app.infrastructure.util.config import AppConfig  
@@ -108,7 +105,7 @@ class SecurityCreatedEventHandler(EventHandler):
         Returns:
         - list of datetime.date: Dates for which we want to update.
         """
-        return [datetime.date.today()]  # [datetime.date(year=2023, month=7, day=7)]  # TODO_DEBUG: remove this
+        # return [datetime.date.today()]  # [datetime.date(year=2023, month=7, day=7)]  # TODO_DEBUG: remove this
         res = []
         # Start with today
         today = date = datetime.date.today()
@@ -116,17 +113,6 @@ class SecurityCreatedEventHandler(EventHandler):
             res.append(date)
             date -= datetime.timedelta(days=1)
         return res
-
-
-# TODO_CLEANUP: remove when not needed
-# class PriceCreatedEventHandler(EventHandler):
-#     def handle(self, event: PriceCreatedEvent):
-#         """ Handle the event """
-#         price = event.price
-#         # Perform actions in response to PriceCreatedEvent
-#         print(f"Handling PriceCreatedEvent: {price}")
-
-
 
 
 @dataclass
@@ -166,98 +152,6 @@ class PriceBatchCreatedEventHandler(EventHandler):
 
         # Refresh for secs and return
         self.held_securities_with_prices_repository.refresh_for_securities(data_date=data_date, securities=secs)
-        return True  # commit offset  # TODO_CLEANUP: remove below unreachable code? 
-
-        logging.info(f'Processing {len(new_prices)} {price_batch.data_date} prices from {price_batch.source}')
-
-        # Get all curr day and prev day prices, TODO: add curr bday audit trail
-        curr_bday_prices = self.price_repository.get(data_date=data_date, security=secs)
-        prev_bday_prices = self.price_repository.get(data_date=get_previous_bday(data_date), security=secs, source=PriceSource('PXAPX'))
-
-        # Get curr bday audit trail
-        curr_bday_audit_trail = self.audit_trail_repository.get(data_date=data_date)
-
-        # Combine them to build SecurityWithPrices objects
-        for sec in secs:
-            sec_curr_bday_prices = [px for px in curr_bday_prices if px.security.lw_id == sec.lw_id]
-
-            # Update source as translated source
-            for i, px in enumerate(sec_curr_bday_prices):
-                px.source = self.translate_price_source(px.source)
-                sec_curr_bday_prices[i] = px
-
-            # Filter to only those relevant
-            relevant_sec_curr_bday_prices = [px for px in sec_curr_bday_prices if self.feed_is_relevant(px.source)]
-            logging.debug(f'{sec.lw_id}: {len(sec_curr_bday_prices)} prices -> {len(relevant_sec_curr_bday_prices)} relevant')
-
-            # Add prev bday APX prices
-            sec_prev_bday_prices = [px for px in prev_bday_prices if px.security.lw_id == sec.lw_id]
-
-            # Add audit trail
-            sec_audit_trail = [ae for ae in curr_bday_audit_trail if ae.security.lw_id == sec.lw_id]
-
-            # Create SWP
-            swp = SecurityWithPrices(
-                security=sec, data_date=data_date
-                , curr_bday_prices=relevant_sec_curr_bday_prices
-                , prev_bday_price=sec_prev_bday_prices[0] if len(sec_prev_bday_prices) else None
-                , audit_trail=sec_audit_trail
-            )
-            if sec_audit_trail is not None:
-                logging.info(f'Saving to SWP repo: {swp}')
-
-            # Save to SecurityWithPrices repo
-            self.security_with_prices_repository.create(swp)
-
-        # Finally, refresh HeldSecuritiesWithPrices repo
-        self.held_securities_with_prices_repository.refresh_for_securities(data_date, secs)
-
-
-    def handle_old(self, event: PriceBatchCreatedEvent):
-        price_batch = event.price_batch
-
-        # Get the individual prices from the repo
-        new_prices = self.price_repository.get(
-            data_date=price_batch.data_date, source=price_batch.source)
-        data_date = price_batch.data_date
-
-        # TODO_DEBUG: remove below - timesaver
-        # self.held_securities_with_prices_repository.refresh_for_securities(data_date=data_date, securities=[px.security for px in new_prices])
-        # return
-
-        if data_date < datetime.date(year=2023, month=7, day=10):
-            return True  # commit offset  # TODO_DEBUG: remove (timesaver)
-            
-        if price_batch.source.name == 'TXPR':
-            return True  # commit offset  # TODO_DEBUG: remove ... time saver
-
-        translated_source = self.translate_price_source(price_batch.source)
-
-        if price_batch.source.name == 'PXAPX':
-            logging.info(f'Processing {len(new_prices)} prices from {price_batch.source}')
-            data_date = get_next_bday(data_date)
-            for px in new_prices:
-                px.source = translated_source
-                self.security_with_prices_repository.add_price(price=px, mode='prev')
-        elif self.feed_is_relevant(translated_source):
-            # return  # TODO_DEBUG: remove (timesaver)
-            logging.info(f'Processing {len(new_prices)} prices from {price_batch.source}')
-            logged = False
-            for px in new_prices:
-                # if px.security.lw_id != 'COCC0000498':
-                #     continue
-                px.source = translated_source
-                if not logged:
-                    logging.info(f'Adding price {px}')
-                    logged = True
-                
-                # Update 
-                self.security_with_prices_repository.add_price(price=px)
-        else:
-            # If we reached here, the feed is not relevant and we won't bother processing it
-            return True  # commit offset
-        # now, refresh master read model:
-        self.held_securities_with_prices_repository.refresh_for_securities(data_date=data_date, securities=[px.security for px in new_prices])
         return True  # commit offset
 
     # TODO_REFACTOR: should this be a generic function rather than belonging to class(es)?
@@ -309,17 +203,12 @@ class AppraisalBatchCreatedEventHandler(EventHandler):
     # The appraisal results will be retrieved from here
     position_repository: PositionRepository
 
-    # We will then update the following repos with the new list of held securities
-    held_securities_repository: SecuritiesForDateRepository
+    # We will then update the following repo with the new held securities
     held_securities_with_prices_repository: SecuritiesWithPricesRepository
 
     def handle(self, event: AppraisalBatchCreatedEvent):
         """ Handle the event """
         appraisal_batch = event.appraisal_batch
-
-        # TODO_DEBUG: remove (timesaver)
-        if appraisal_batch.data_date < datetime.date(year=2023, month=7, day=26):
-            return True  # commit offset
 
         # Perform actions in response to AppraisalBatchCreatedEvent
         # TODO: inspect "portfolios" here, and ignore if not @LW_ALL_OpenAndMeasurement?
@@ -343,46 +232,113 @@ class AppraisalBatchCreatedEventHandler(EventHandler):
         logging.info(f'Done refreshing HSWP repo for {next_bday}')
         return True  # commit offset
 
-    # TODO: remove below when not needed, i.e. once confirmed retiring the held_securities read model
-    def handle_old(self, event: AppraisalBatchCreatedEvent):
-        """ Handle the event """
-        appraisal_batch = event.appraisal_batch
-
-        # TODO_DEBUG: remove (timesaver)
-        if appraisal_batch.data_date != datetime.date(year=2023, month=7, day=17):
-            return
-
-        next_bday = get_next_bday(appraisal_batch.data_date)
-        # Perform actions in response to AppraisalBatchCreatedEvent
-        # TODO: inspect "portfolios" here, and ignore if not @LW_ALL_OpenAndMeasurement?
-        # positions = self.position_repository.get(data_date=appraisal_batch.data_date)
-        # next_bday = get_next_bday(appraisal_batch.data_date)
-        # held_secs = [pos.security for pos in positions]
-        # held_secs = set(held_secs)  # list(dict.fromkeys(held_secs))  # to remove dupes
-
-        # Get unique securities
-        held_secs = self.position_repository.get_unique_securities(data_date=appraisal_batch.data_date)
-
-        # Update held securities RM for appraisal date
-        self.held_securities_repository.create(data_date=appraisal_batch.data_date, securities=held_secs)
-
-        # Update held securities RM for next bday, if the file DNE
-        if self.held_securities_repository.get(data_date=next_bday) is None:
-            self.held_securities_repository.create(data_date=next_bday, securities=held_secs)
-
-        # Update master RM, removing securities which are not in the Appraisal result because they are not held
-        # self.held_securities_with_prices_repository.refresh_for_securities(data_date=appraisal_batch.data_date, securities=held_secs, remove_other_secs=True)
-
 
 @dataclass
 class PositionEventHandler(EventHandler):
-    position_event_publisher: EventPublisher
+    # We will upsert to the following repo
+    position_repo: PositionRepository
+    # We will use the following repo to retrieve the lw_id, if needed
+    security_repo: SecurityRepository
+    # We will use the following repo to determine whether the security is held
+    held_securities_repo: SecurityRepository
+    # ... and then add/remove the security from the following repo
+    held_securities_with_prices_repo: SecuritiesWithPricesRepository
 
     def handle(self, event: Union[PositionCreatedEvent, PositionDeletedEvent]):
         """ Handle the event """
-        # Publish using the provided event publisher
+        # Upsert to the provided position repo
         try:
-            self.position_event_publisher.publish(event)
+
+            # Temp20230912: skip if before today
+            if event.position.attributes['ts_ms'] < 1694551006580:  # 1694494394582:
+                logging.info(f'Skipping position which is too early (temp20230912)')
+                return True
+
+            # Check whether the repo implements an upsert, as this is required
+            if not hasattr(self.position_repo, 'upsert'):
+                logging.exception(NotImplementedError(f"{self.position_repo.__class__.__name__} must provide an upsert method!"))
+                logging.error('PositionEventHandler returning False as the Position event has not been processed!')
+                return False
+
+            # Check whether the repo implements remove_securities, as this is required
+            if not hasattr(self.held_securities_with_prices_repo, 'remove_securities'):
+                logging.exception(NotImplementedError(f"{self.held_securities_with_prices_repo.__class__.__name__} must provide a remove_securities method!"))
+                logging.error('PositionEventHandler returning False as the Position event has not been processed!')
+                return False
+                
+            # Check whether the repo implements refresh_for_securities, as this is required
+            if not hasattr(self.held_securities_with_prices_repo, 'refresh_for_securities'):
+                logging.exception(NotImplementedError(f"{self.held_securities_with_prices_repo.__class__.__name__} must provide a refresh_for_securities method!"))
+                logging.error('PositionEventHandler returning False as the Position event has not been processed!')
+                return False
+                
+            # Initialize
+            is_deleted = True if isinstance(event, PositionDeletedEvent) else False
+            today = datetime.date.today()
+            position = event.position
+            sec = position.security
+
+            # Determine whether this Security is held pre-event - used later to determine whether this has changed
+            # TODO_LAYERS: pms_security_id is a system-specific field, so this probably doesn't belong in the application layer
+            held_res = self.held_securities_repo.get(lw_id=sec.lw_id, pms_security_id=sec.attributes['pms_security_id'])
+            sec_held_before = True if len(held_res) else False            
+            
+            # Do the upsert and confirm row cnt
+            row_cnt = self.position_repo.upsert(position, is_deleted)
+            if not row_cnt:
+                logging.error(f'Upserted {row_cnt} rows! PositionEventHandler returning False as the Position event has not been processed!')
+                return False
+
+
+            # TODO_CLEANUP: remove below once confirmed not using - inefficient solution to new/deleted held secs
+            # else:
+            #     # Check whether the security is held
+            #     sec = position.security
+            #     # TODO_LAYERS: pms_security_id is a system-specific field, so this probably doesn't belong in the application layer
+            #     held_res = self.held_securities_repo.get(lw_id=sec.lw_id, pms_security_id=sec.attributes['pms_security_id'])
+            #     if len(held_res) and not is_deleted:
+            #         # PositionCreatedEvent, and the Security is now held -> need to refresh:
+            #         # TODO_PERF: this refresh is only necessary when the security isn't already in the master read model ... so should we check first?
+            #         logging.info(f'Position created for {sec.lw_id}, refreshing master read model...')
+            #         self.held_securities_with_prices_repo.refresh_for_securities(data_date=today, securities=held_res)
+            #     elif not len(held_res) and is_deleted:
+            #         # PositionDeletedEvent, and the Security is now not held -> need to remove it:
+            #         logging.info(f'Position deleted for {sec}, which is now no longer held. Deleting from master read model...')
+                            
+            #         # Check whether the repo implements remove_securities, as this is required
+            #         if not hasattr(self.held_securities_with_prices_repo, 'remove_securities'):
+            #             logging.exception(NotImplementedError(f"{self.held_securities_with_prices_repo.__class__.__name__} must provide a remove_securities method!"))
+            #             logging.error('PositionEventHandler returning False as the Position event has not been processed!')
+            #             return False
+
+            #         # Now remove this security from the master read model:
+            #         self.held_securities_with_prices_repo.remove_securities(data_date=today, securities=sec)
+            #     return True  # commit offset
+
+
+            held_res = self.held_securities_repo.get(lw_id=sec.lw_id, pms_security_id=sec.attributes['pms_security_id'])
+            sec_held_after = True if len(held_res) else False
+
+            # If the security is no longer held due to this delete event, remove it from the held SWP repo
+            if (is_deleted and sec_held_before and not sec_held_after):
+                # Need to confirm we have an lw_id, and if not then get it, assuming we have a pms_security_id:
+                if not len(sec.lw_id):
+                    sec = self.security_repo.get(pms_security_id=sec.attributes['pms_security_id'])
+                logging.info(f'{sec} was held before and due to this delete is not held! Removing it from {self.held_securities_with_prices_repo.__class__.__name__}...')
+                self.held_securities_with_prices_repo.remove_securities(data_date=today, securities=sec)
+            
+            # If the security is newly held due to this create event, refresh the held SWP repo with it
+            if (not is_deleted and not sec_held_before and sec_held_after):
+                # Need to confirm we have an lw_id, and if not then get it, assuming we have a pms_security_id:
+                if not len(sec.lw_id):
+                    sec = self.security_repo.get(pms_security_id=sec.attributes['pms_security_id'])
+                logging.info(f'{sec} is newly held due to this create! Refreshing it in {self.held_securities_with_prices_repo.__class__.__name__}...')
+                self.held_securities_with_prices_repo.refresh_for_securities(data_date=today, securities=sec)
+            
+            # If we made it here, the above all succeeded
+            return True  # commit offset
+
+            # self.position_event_publisher.publish(event)  # TODO_CLEANUP
         except Exception as ex:
             logging.exception(ex)
         return True  # commit offset
@@ -395,13 +351,25 @@ class PositionEventHandler(EventHandler):
 
 @dataclass
 class PortfolioCreatedEventHandler(EventHandler):
-    portfolio_event_publisher: EventPublisher
+    # We will upsert to the following repo
+    portfolio_repo: PortfolioRepository
 
     def handle(self, event: PortfolioCreatedEvent):
         """ Handle the event """
         # Publish using the provided event publisher
         try:
-            self.portfolio_event_publisher.publish(event)
+            # Check whether the repo implements an upsert, as this is required
+            if not hasattr(self.portfolio_repo, 'upsert'):
+                logging.exception(NotImplementedError(f"{self.portfolio_repo.__class__.__name__} must provide an upsert method!"))
+                logging.error('PortfolioCreatedEventHandler returning False as the Portfolio event has not been processed!')
+                return False
+
+            # Do the upsert and confirm row cnt
+            row_cnt = self.portfolio_repo.upsert(event.portfolio)
+            if not row_cnt:
+                logging.error(f'Upserted {row_cnt} rows! PortfolioCreatedEventHandler returning False as the Portfolio event has not been processed!')
+                return False
+
         except Exception as ex:
             logging.exception(ex)
         return True  # commit offset

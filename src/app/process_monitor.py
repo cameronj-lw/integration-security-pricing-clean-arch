@@ -12,8 +12,6 @@ import time
 
 # Append to pythonpath
 src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-src_dir = src_dir.replace('C:\\', f'\\\\WS215\\c$\\', 1)  
-# TODO: remove above once running local files
 sys.path.append(src_dir)
 
 # native
@@ -35,13 +33,13 @@ def read_pid_from_file(file_path):
     except ValueError:
         return None
 
-def send_teams_alert(webhook_url, msg):
+def send_teams_alert(webhook_url, msg):  # TODO: migrate to use infrastructure.alert_repositories.MSTeamsAlertRepository?
     # First, check if it's currently monitoring hours
     now = datetime.datetime.now()
-    start_time = now.replace(hour=int(AppConfig().get('process_monitor', 'start_time_hour'))
-            , minute=int(AppConfig().get('process_monitor', 'start_time_minute')))
-    end_time = now.replace(hour=int(AppConfig().get('process_monitor', 'end_time_hour'))
-            , minute=int(AppConfig().get('process_monitor', 'end_time_minute')))
+    start_time = now.replace(hour=int(AppConfig().parser.get('process_monitor', 'start_time_hour'))
+            , minute=int(AppConfig().parser.get('process_monitor', 'start_time_minute')))
+    end_time = now.replace(hour=int(AppConfig().parser.get('process_monitor', 'end_time_hour'))
+            , minute=int(AppConfig().parser.get('process_monitor', 'end_time_minute')))
     if start_time < now < end_time and now.weekday() < 5:  # Check only Mon-Fri between configured times
         message = {
             "title": "Process Monitor Alert",
@@ -61,7 +59,7 @@ def is_pid_running(pid):
         return False
 
 def expected_pid(process_name):
-    pid_file_path = f"{AppConfig().get('process_monitor', 'pid_log_dir')}\\{process_name}.pid"
+    pid_file_path = f"{AppConfig().parser.get('process_monitor', 'pid_log_dir')}\\{process_name}.pid"
     pid = read_pid_from_file(pid_file_path)
     return pid
 
@@ -73,13 +71,13 @@ def is_process_running(process_name):
         return pid
 
 def attempt_restart(process_name):
-    num_attempts = int(AppConfig().get('process_monitor', 'num_schedtask_retry_attempts'))
-    wait_sec = int(AppConfig().get('process_monitor', 'schedtask_wait_sec'))
+    num_attempts = int(AppConfig().parser.get('process_monitor', 'num_schedtask_retry_attempts'))
+    wait_sec = int(AppConfig().parser.get('process_monitor', 'schedtask_wait_sec'))
 
     for attempt in range(num_attempts):
         full_schedtask_name = f'Automation\\LW-Security-Pricing\\{process_name}'
         logging.info(f'Restart attempt {attempt+1}...')
-        start_res = start_scheduled_task(full_schedtask_name)
+        _ = start_scheduled_task(full_schedtask_name)
         # logging.info(f"Restart attempt {attempt+1} {('succeeded' if start_res else 'failed')}")
         time.sleep(wait_sec)
 
@@ -99,34 +97,47 @@ def attempt_restart(process_name):
 
 def start_scheduled_task(task_name):
     try:
-        subprocess.run(["schtasks", "/run", "/tn", task_name], check=True)
+        subprocess.run(["schtasks", "/run", "/tn", task_name], check=True, shell=True)
         return True
     except subprocess.CalledProcessError:
         return False
 
+
+def update_logging_to_today_folder(current_log_day):
+
+    # Check if we are already logging to today. If not, we need to setup (or re-setup) the logging.
+    today = datetime.date.today()
+    if current_log_day is None or current_log_day != today:
+        # If we reach here, it indicates we need to start logging to the new folder for today
+        log_file_name = AppConfig().parser.get("logging", "process_monitor_logfile").format(hostname=socket.gethostname().upper())
+        log_file = prepare_dated_file_path(AppConfig().parser.get("logging", "log_dir"), today, log_file_name)
+        setup_logging('INFO', log_file)
+    
+    # If we reach here, we are now logging to today folder. Return today as it is now the current log day.
+    return today
+
+
 if __name__ == "__main__":
 
     # initialize
-    SLEEP_SECONDS = int(AppConfig().get('process_monitor', 'default_wait_sec'))
+    SLEEP_SECONDS = int(AppConfig().parser.get('process_monitor', 'default_wait_sec'))
+    current_log_day = None
 
-    log_file = prepare_dated_file_path(AppConfig().get("logging", "log_dir"), datetime.date.today(), AppConfig().get("logging", "process_monitor_logfile"))
-    setup_logging('INFO', log_file)
-    
-    process_names = [
-        "LW-Security-Pricing-REST-API"
-        , "LW-Security-Pricing-Kafka-Consumer-Security"
-        , "LW-Security-Pricing-Kafka-Consumer-Appraisal-Batch"
-        , "LW-Security-Pricing-Kafka-Consumer-Price-Batch"
-        , "LW-Security-Pricing-Kafka-Consumer-Portfolio"
-        , "LW-Security-Pricing-Kafka-Consumer-Position"
-        # , ""
-    ]
+    # Get process names from config
+    hostname = socket.gethostname().lower()
+    unparsed = AppConfig().parser.get('process_monitor', hostname)
+    process_names = [pn.strip() for pn in unparsed.split(',')]
 
     # Initialize - no need to rollover today
     has_been_killed_today = {pn: [datetime.date.today()] for pn in process_names}
 
 
     while True:
+        # First, re-point the logging for this process itself to new folder for today, if needed
+        current_log_day = update_logging_to_today_folder(current_log_day)
+
+        logging.info(f'Monitoring for the following configured for {hostname}:'+'\n\n'+'\n'.join(process_names)+'\n')
+
         today = datetime.date.today()
         for pn in process_names:
 
@@ -154,11 +165,11 @@ if __name__ == "__main__":
                     else:
                         msg = f"{pn} on {socket.gethostname()} is down and could not be restarted!"
                         send_teams_alert(TEAMS_WEBHOOK_URL, msg)
-                        SLEEP_SECONDS = int(AppConfig().get('process_monitor', 'alert_wait_sec'))
+                        SLEEP_SECONDS = int(AppConfig().parser.get('process_monitor', 'alert_wait_sec'))
 
                 else:
-                    logging.info(f"Process {pn} is running")
-                    SLEEP_SECONDS = int(AppConfig().get('process_monitor', 'default_wait_sec'))
+                    logging.info(f"Process {pn} is running as PID {pid}")
+                    SLEEP_SECONDS = int(AppConfig().parser.get('process_monitor', 'default_wait_sec'))
             else:
                 logging.info("PID file not found or invalid PID.")
                 # Attempt restarting the scheduled task
@@ -169,7 +180,7 @@ if __name__ == "__main__":
                 else:
                     msg = f"{pn} on {socket.gethostname()} is down and could not be restarted!"
                     send_teams_alert(TEAMS_WEBHOOK_URL, msg)
-                    SLEEP_SECONDS = int(AppConfig().get('process_monitor', 'alert_wait_sec'))
+                    SLEEP_SECONDS = int(AppConfig().parser.get('process_monitor', 'alert_wait_sec'))
 
         # Wait for seconds before checking again
         time.sleep(SLEEP_SECONDS)

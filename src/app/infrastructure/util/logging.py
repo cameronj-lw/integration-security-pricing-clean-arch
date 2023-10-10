@@ -1,7 +1,6 @@
 
 # core python
 import logging
-import logging.config
 import os
 import socket
 
@@ -71,7 +70,7 @@ def setup_logging(log_level_override=None, log_file_name=None):
         )
 
         # Log PID
-        pid_log_dir = AppConfig().get('process_monitor', 'pid_log_dir')
+        pid_log_dir = AppConfig().parser.get('process_monitor', 'pid_log_dir')
         log_file_name, _ = os.path.splitext(os.path.basename(log_file_name))
         pid_log_file_name = f'{log_file_name}.pid'
         pid_log_file_path = os.path.join(pid_log_dir, pid_log_file_name)

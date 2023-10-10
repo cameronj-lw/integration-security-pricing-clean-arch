@@ -13,11 +13,7 @@ from app.domain.models import (
     Price, Security, PriceAuditEntry,
     PriceFeed, PriceFeedWithStatus, PriceSource, PriceType
 )
-from app.domain.repositories import (
-    SecurityRepository, PriceRepository
-    , PriceFeedRepository, PriceFeedWithStatusRepository
-    , PriceAuditEntryRepository, PriceSourceRepository, PriceTypeRepository
-)
+
 
 from app.infrastructure.sql_tables import MGMTDBMonitorTable
 from app.infrastructure.util.date import get_current_bday, get_previous_bday
@@ -256,19 +252,5 @@ class MGMTDBPriceFeedWithStatus(PriceFeedWithStatus):
 
     def update_status(self):
         self.status, self.status_ts = self.feed.get_status(self.data_date)
-
-    # def to_dict(self):  # TODO_CLEANUP: remove when not needed
-    #     return {
-    #         'data_date': self.data_date.isoformat(),
-    #         'feed_name': self.feed.name,
-    #         'feed_status': self.status,
-    #         'last_update_ts': self.status_ts.isoformat(),
-    #         'normal_eta': self.feed.get_normal_eta(self.data_date).isoformat(),
-    #         'security_type': self.feed.security_type,
-    #     }
-            # 'data_date': self.data_date.isoformat(),
-            # 'feed': self.feed.name,
-            # 'status': self.status,
-            # 'asofdate': self.status_ts,#.isoformat(),
 
 

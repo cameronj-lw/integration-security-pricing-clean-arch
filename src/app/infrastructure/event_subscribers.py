@@ -46,7 +46,7 @@ class KafkaEventConsumer(EventSubscriber):
         super().__init__(message_broker=KafkaBroker(), topics=topics, event_handler=event_handler)
         self.config = dict(self.message_broker.config)
         self.config.update(AppConfig().parser['kafka_consumer'])
-        print(f'Created KafkaEventConsumer with config: {type(self.config)} {self.config}')
+        logging.info(f'Creating KafkaEventConsumer with config: {type(self.config)} {self.config}')
         self.consumer = Consumer(self.config)
         # self.consumer.subscribe(self.topics, on_assign=self.on_assign)
         # TODO: remove above when not needed
@@ -76,6 +76,7 @@ class KafkaEventConsumer(EventSubscriber):
         self.reset_offset = reset_offset
         self.consumer.subscribe(self.topics, on_assign=self.on_assign)
         try:
+            sleep_secs = int(AppConfig().parser.get('kafka_consumer_lw', 'sleep_seconds', fallback=0))
             while True:
                 msg = self.consumer.poll(1.0)
                 if msg is None:
@@ -84,7 +85,7 @@ class KafkaEventConsumer(EventSubscriber):
                     # rebalance and start consuming
                     logging.debug("Waiting...")
                 elif msg.error():
-                    logging.error("ERROR: %s".format(msg.error()))
+                    logging.error(f"ERROR: {msg.error()}")
                     # TODO: raise exception?
                 elif msg.value() is not None:
                     logging.info(f"Consuming message: {msg.value()}")
@@ -117,7 +118,9 @@ class KafkaEventConsumer(EventSubscriber):
                         logging.info("Done committing offset")
                     else:
                         logging.info("Not committing offset, likely due to the most recent exception")
-                # time.sleep(1)
+                    if sleep_secs:
+                        logging.info(f'Sleeping for {sleep_secs} seconds...')
+                        time.sleep(sleep_secs)
         except KeyboardInterrupt:
             pass
         finally:
@@ -164,7 +167,7 @@ class KafkaEventConsumer(EventSubscriber):
 class KafkaCoreDBSecurityCreatedEventConsumer(KafkaEventConsumer):
     def __init__(self, event_handler: EventHandler):
         """ Creates a KafkaEventConsumer to consume new/changed coredb securities with the provided event handler """
-        super().__init__(event_handler=event_handler, topics=[AppConfig().get('kafka_topics', 'coredb_security')])
+        super().__init__(event_handler=event_handler, topics=[AppConfig().parser.get('kafka_topics', 'coredb_security')])
 
     def deserialize(self, message_value: bytes) -> SecurityCreatedEvent:
         event_dict = json.loads(message_value.decode('utf-8'))
@@ -188,7 +191,7 @@ class KafkaCoreDBSecurityCreatedEventConsumer(KafkaEventConsumer):
 class KafkaCoreDBAppraisalBatchCreatedEventConsumer(KafkaEventConsumer):
     def __init__(self, event_handler: EventHandler):
         """ Creates a KafkaEventConsumer to consume new/changed coredb appraisal batches with the provided event handler """
-        super().__init__(event_handler=event_handler, topics=[AppConfig().get('kafka_topics', 'coredb_appraisal_batch')])
+        super().__init__(event_handler=event_handler, topics=[AppConfig().parser.get('kafka_topics', 'coredb_appraisal_batch')])
 
     def deserialize(self, message_value: bytes) -> AppraisalBatchCreatedEvent:
         # Get dict from Kafka message
@@ -211,7 +214,7 @@ class KafkaCoreDBAppraisalBatchCreatedEventConsumer(KafkaEventConsumer):
 class KafkaCoreDBPriceBatchCreatedEventConsumer(KafkaEventConsumer):
     def __init__(self, event_handler: EventHandler):
         """ Creates a KafkaEventConsumer to consume new/changed coredb price batches with the provided event handler """
-        super().__init__(event_handler=event_handler, topics=[AppConfig().get('kafka_topics', 'coredb_price_batch')])
+        super().__init__(event_handler=event_handler, topics=[AppConfig().parser.get('kafka_topics', 'coredb_price_batch')])
 
     def deserialize(self, message_value: bytes) -> PriceBatchCreatedEvent:
         event_dict = json.loads(message_value.decode('utf-8'))
@@ -225,7 +228,7 @@ class KafkaCoreDBPriceBatchCreatedEventConsumer(KafkaEventConsumer):
 class KafkaAPXPositionEventConsumer(KafkaEventConsumer):
     def __init__(self, event_handler: EventHandler):
         """ Creates a KafkaEventConsumer to consume new/deleted apxdb positions with the provided event handler """
-        super().__init__(event_handler=event_handler, topics=[AppConfig().get('kafka_topics', 'apxdb_position')])
+        super().__init__(event_handler=event_handler, topics=[AppConfig().parser.get('kafka_topics', 'apxdb_position')])
 
     def deserialize(self, message_value: bytes) -> Union[PositionCreatedEvent, PositionDeletedEvent]:
         event_dict = json.loads(message_value.decode('utf-8'))
@@ -247,6 +250,10 @@ class KafkaAPXPositionEventConsumer(KafkaEventConsumer):
         if 'positionid' in vals and 'pms_position_id' not in vals:
             position_attributes.update({'pms_position_id':vals['positionid']})
 
+        # Temp20230912: include the ts_ms
+        if 'ts_ms' not in position_attributes:
+            position_attributes.update({'ts_ms':event_dict['payload']['ts_ms']})
+
         # Create Position instance
         position = Position(portfolio=portfolio, data_date=datetime.date.today()
             , security=security, quantity=vals['quantity'], is_short=vals['isshortposition']
@@ -265,8 +272,8 @@ class KafkaAPXPositionEventConsumer(KafkaEventConsumer):
 class KafkaAPXPortfolioEventConsumer(KafkaEventConsumer):
     def __init__(self, event_handler: EventHandler, portfolio_repository: PortfolioRepository):
         """ Creates a KafkaEventConsumer to consume new/deleted apxdb portfolios with the provided event handler """
-        super().__init__(event_handler=event_handler, topics=[AppConfig().get('kafka_topics', 'apxdb_portfolio')
-                , AppConfig().get('kafka_topics', 'apxdb_aoobject')])
+        super().__init__(event_handler=event_handler, topics=[AppConfig().parser.get('kafka_topics', 'apxdb_portfolio')
+                , AppConfig().parser.get('kafka_topics', 'apxdb_aoobject')])
         
         # We'll retrieve portfolios from here, to differentiate messages 
         # reresenting portfolios vs. not portfolios

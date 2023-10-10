@@ -34,19 +34,7 @@ class KafkaEventProducer(EventPublisher):
     @abstractmethod
     def serialize(self, event: Type[Event]) -> Tuple[Optional[str], bytes]:  
         # TODO: does the message always have to be bytes?
-        """ Subclasses of KafkaEventConsumer must implement a deserialize method """
-        # TODO_CLEANUP: remove below once not needed, i.e. once confirmed we want this
-        # method as an abstractmethod
-        # TODO: should we even allow return value of (key, value)?
-        """ Default serialization for kafka. Subclasses may override to meet specific needs."""
-        # Convert to dict, then JSON string, then encode to bytes:
-        # try:
-        #     key = str(event.message_key)
-        # except AttributeError:
-        #     key = None
-        # event_dict = event.__dict__
-        # value = json.dumps(event_dict).encode('utf-8')
-        # return (key, value)
+        """ Subclasses of KafkaEventConsumer must implement a serialize method """
     
     def callback(self, err, msg):
         if err:
@@ -65,7 +53,7 @@ class KafkaEventProducer(EventPublisher):
 
 class KafkaCoreDBPortfolioCreatedEventProducer(KafkaEventProducer):
     def __init__(self):
-        super().__init__(topics=[AppConfig().get('kafka_topics', 'coredb_portfolio')])
+        super().__init__(topics=[AppConfig().parser.get('kafka_topics', 'coredb_portfolio')])
         # TODO: better schema management? Schema registry? 
         self.schema = {
             "name": "coredb_portfolio",
@@ -123,7 +111,7 @@ class KafkaCoreDBPortfolioCreatedEventProducer(KafkaEventProducer):
 
 class KafkaCoreDBPositionEventProducer(KafkaEventProducer):
     def __init__(self):
-        super().__init__(topics=[AppConfig().get('kafka_topics', 'coredb_position')])
+        super().__init__(topics=[AppConfig().parser.get('kafka_topics', 'coredb_position')])
         # TODO: better schema management? Schema registry? 
         self.schema = {
             "name": "coredb_position",

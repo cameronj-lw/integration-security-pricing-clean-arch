@@ -253,9 +253,9 @@ class CoreDBvwHeldSecurityView(BaseTable):
 	schema = 'dbo'
 	table_name = 'vw_held_security'
 
-	def read(self):
+	def read(self, lw_id=None, pms_security_id=None):
 		"""
-		Read all entries
+		Read all entries, optionally filtering for one or more lw_id / pms_security_id
 
 		:return: DataFrame
 		"""
@@ -264,6 +264,19 @@ class CoreDBvwHeldSecurityView(BaseTable):
 			stmt = sql.select(self.table_def)
 		else:
 			stmt = sql.select([self.table_def])
+		if lw_id is not None:
+			if isinstance(lw_id, str):
+				if len(lw_id):  # lw_id might be an empty str, in which case we should not filter for it
+					logging.info(f'CoreDBvwHeldSecurityView filtering for lw_id {lw_id}')
+					stmt = stmt.where(self.c.lw_id == lw_id)
+			elif isinstance(lw_id, list):
+				stmt = stmt.where(self.c.lw_id.in_(lw_id))
+		if pms_security_id is not None:
+			if isinstance(pms_security_id, int):
+				logging.info(f'CoreDBvwHeldSecurityView filtering for pms_security_id {pms_security_id}')
+				stmt = stmt.where(self.c.pms_security_id == pms_security_id)
+			elif isinstance(pms_security_id, list):
+				stmt = stmt.where(self.c.pms_security_id.in_(pms_security_id))
 		return self.execute_read(stmt)
 
 
@@ -349,6 +362,44 @@ class CoreDBvwAPXAppraisalView(BaseTable):
 		stmt = stmt.distinct()
 
 		# Execute and return
+		return self.execute_read(stmt)
+
+
+class CoreDBPositionTable(BaseTable):
+	config_section = 'coredb'
+	schema = 'dbo'
+	table_name = 'position'
+
+	def read(self):
+		"""
+		Read all entries
+
+		:return: DataFrame
+		"""
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
+		return self.execute_read(stmt)
+		
+
+class CoreDBPortfolioTable(BaseTable):
+	config_section = 'coredb'
+	schema = 'dbo'
+	table_name = 'portfolio'
+
+	def read(self):
+		"""
+		Read all entries
+
+		:return: DataFrame
+		"""
+		stmt = None
+		if sqlalchemy.__version__ >= '2':
+			stmt = sql.select(self.table_def)
+		else:
+			stmt = sql.select([self.table_def])
 		return self.execute_read(stmt)
 
 

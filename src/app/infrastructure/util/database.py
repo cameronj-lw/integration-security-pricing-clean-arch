@@ -40,15 +40,15 @@ def get_engine(config_section: str):
     """
 
     # Get host & DB. Check if already in the cache.
-    host = AppConfig().get(config_section, 'host', fallback=None)
-    db = AppConfig().get(config_section, 'database', fallback=None)
+    host = AppConfig().parser.get(config_section, 'host', fallback=None)
+    db = AppConfig().parser.get(config_section, 'database', fallback=None)
     key = (host, db)
 
     if key not in _DB_ENGINE_CACHE:
 
         # Get user & pass from config
-        username = AppConfig().get(config_section, 'username', fallback=None)
-        password = AppConfig().get(config_section, 'password', fallback=None)
+        username = AppConfig().parser.get(config_section, 'username', fallback=None)
+        password = AppConfig().parser.get(config_section, 'password', fallback=None)
 
         # Prepare connection string
         driver = select_driver()
@@ -72,8 +72,8 @@ def get_engine(config_section: str):
             )
 
         # Add sqlalchemy configs, if provided
-        sqlalchemy_pool_size = AppConfig().get(config_section, 'sqlalchemy_pool_size', fallback=None)
-        sqlalchemy_pool_timeout = AppConfig().get(config_section, 'sqlalchemy_pool_timeout', fallback=None)
+        sqlalchemy_pool_size = AppConfig().parser.get(config_section, 'sqlalchemy_pool_size', fallback=None)
+        sqlalchemy_pool_timeout = AppConfig().parser.get(config_section, 'sqlalchemy_pool_timeout', fallback=None)
 
         # http://docs.sqlalchemy.org/en/latest/dialects/mssql.html#legacy-schema-mode
         engine_args = {'url': connection_str, 'legacy_schema_aliasing': False}
@@ -96,8 +96,8 @@ def get_metadata(config_section: str):
     """
     
     # Get host & DB. Check if already in the cache.
-    host = AppConfig().get(config_section, 'host', fallback=None)
-    db = AppConfig().get(config_section, 'database', fallback=None)
+    host = AppConfig().parser.get(config_section, 'host', fallback=None)
+    db = AppConfig().parser.get(config_section, 'database', fallback=None)
     key = (host, db)
 
     if key not in _DB_META_CACHE:
@@ -165,13 +165,14 @@ class BaseDB(object):
 
         return data
 
-    def execute_write(self, sql_stmt, log_query=False, commit=False):
+    def execute_write(self, sql_stmt, log_query=False, commit=None):
         """
         Execute an INSERT, UPDATE, or DELETE statement. Execution is done in a transaction and
         COMMIT must be set in order to commit the transaction.
 
         :param sql_stmt: SqlAlchemy statement
         :param log_query: Set to log compiled query
+        :param commit: Whether to commit. If not provided, defer to AppConfig
         :return: A sqlalchemy.engine.ResultProxy
         """
         if log_query:
@@ -179,6 +180,10 @@ class BaseDB(object):
             print(sql_stmt.compile())
             print(sql_stmt.compile().params)
             logging.info('=== SQL END ===')
+
+        # Get commit from AppConfig if not provided
+        if commit is None:
+            commit = AppConfig().parser.get('app', 'commit', fallback=False)
 
         # Create transaction to run statement in. Rollback if commit not set
         connection = self.engine.connect()
@@ -192,4 +197,59 @@ class BaseDB(object):
                 transaction.rollback()
 
         return data
+
+
+def _convert_to_df(rows, description):
+	"""
+	Convert pyodbc result to dataframe
+
+	:param rows: Raw pyodbc rows from cursor.fetchall()
+	:param description: Description of columns from cursor.description
+	:returns: DataFrame of results
+	"""
+	# Description is a list of tuples. Each tuple is of the form (column name, type code,
+	# display size, internal size, precision, scale, nullable). Extract just column names
+	columns = [col_description[0] for col_description in description]
+
+	# Create dict that we can turn into a dataframe
+	df_dict = {}
+	for column in columns:
+		df_dict[column] = []
+
+	# Go through each row and add the values to the dict
+	for row in rows:
+		assert len(row) == len(columns)
+		for i, val in enumerate(row):
+			df_dict[columns[i]].append(val)
+
+	return pd.DataFrame(df_dict)
+
+
+def execute_multi_query(conn, query_str):
+	"""
+	Executes a query that may return multiple result sets. Each result set is returned as a separate
+	DataFrame
+
+	:param conn: A pyodbc connection
+	:param query_str: The query str to execute
+	:returns: A list of DataFrames
+	"""
+	cursor = conn.cursor()
+	cursor.execute(query_str)
+
+	results = []
+	while True:
+		try:
+			rows = cursor.fetchall()
+			df = _convert_to_df(rows, cursor.description)
+			results.append(df)
+		except pyodbc.ProgrammingError:
+			# fetchall will fail if the result set was not a query
+			pass
+
+		if not cursor.nextset():
+			break
+
+	return results
+    
 

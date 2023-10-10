@@ -10,6 +10,7 @@ from flask_restx import Api, Resource
 
 # native
 # from app.application.query_handlers import PriceFeedWithStatusQueryHandler
+from app.infrastructure.api_repositories import IMEXError
 from app.interface.formatters import DefaultRESTFormatter
 
 
@@ -19,21 +20,23 @@ CORS(blueprint)
 
 
 
-
-
+# Added below line as part of the Debug with VerveSys
+@api.route('/api////pricing/notification-subscription')
 @api.route('/api/pricing/notification-subscription')
 class PricingNotificationSubscription(Resource):
     def post(self):
-        payload = api.payload
+        # payload = api.payload
         return  # TODO_WAVE3: implement
     
     def get(self):
         return  # TODO_WAVE3: implement
 
     def delete(self):
-        payload = api.payload
+        # payload = api.payload
         return  # TODO_WAVE3: implement
 
+# Added below line as part of the Debug with VerveSys
+@api.route('/api////pricing/feed-status')
 @api.route('/api/pricing/feed-status')
 class PricingFeedStatus(Resource):
     formatter = DefaultRESTFormatter()
@@ -85,6 +88,8 @@ class PricingFeedStatusByDate(Resource):
         except Exception as e:
             return self.formatter.exception(e)
 
+# Added below line as part of the Debug with VerveSys
+@api.route('/api////transaction/<string:trade_date>')
 @api.route('/api/transaction/<string:trade_date>')
 class TransactionByDate(Resource):
     def get(self, trade_date):
@@ -103,6 +108,8 @@ class PricingAuditReason(Resource):
         # Return standard format
         return self.formatter.success_get(reasons)
 
+# Added below line as part of the Debug with VerveSys
+@api.route('/api////pricing/attachment/<string:price_date>')
 @api.route('/api/pricing/attachment/<string:price_date>')
 class PricingAttachmentByDate(Resource):
     formatter = DefaultRESTFormatter()
@@ -159,9 +166,17 @@ class PriceByIMEX(Resource):
             command_handler = current_app.config['price_by_imex_command_handler']
             row_cnt = command_handler.handle_post(payload)
             return self.formatter.success_post(row_cnt)
+        except IMEXError as e:
+            return self.formatter.exception(e, http_return_code=422)
         except Exception as e:
+            if type(e).__name__ == 'IMEXError':  # TODO: better way to differentiate IMEXError vs other?
+                logging.error(f'routes.py::PriceByIMEX Found IMEXError!')
+                return self.formatter.exception(e, http_return_code=422)
+            logging.error(f'routes.py::PriceByIMEX Found {type(e).__name__}!')
             return self.formatter.exception(e)
 
+# Added below line as part of the Debug with VerveSys
+@api.route('/api////pricing/manual-pricing-security')
 @api.route('/api/pricing/manual-pricing-security')
 class ManualPricingSecurity(Resource):
     formatter = DefaultRESTFormatter()
@@ -187,6 +202,8 @@ class ManualPricingSecurity(Resource):
             # Return standard format
             return self.formatter.success_get(result_data)
         except Exception as e:
+            #Added as part of the debug issue VerveSys
+            logging.error(e)
             return self.formatter.exception(e)
 
     def delete(self):
@@ -197,23 +214,34 @@ class ManualPricingSecurity(Resource):
             return self.formatter.success_delete(row_cnt)
         except Exception as e:
             return self.formatter.exception(e)
-    
+            
+# Added below line as part of the Debug with VerveSys
+@api.route('/api////pricing/audit-trail/<string:price_date>')    
 @api.route('/api/pricing/audit-trail/<string:price_date>')
 class PricingAuditTrail(Resource):
     def post(self, price_date):
-        payload = api.payload
+        # payload = api.payload
         return  # TODO: implement
 
     def get(self, price_date):
         return  # TODO: implement
-
+        
+# Added below line as part of the Debug with VerveSys
+@api.route('/api////pricing/audit-trail-v2/<string:price_date>')
 @api.route('/api/pricing/audit-trail-v2/<string:price_date>')
 class PricingAuditTrailv2(Resource):
     formatter = DefaultRESTFormatter()
 
     def post(self, price_date):
         payload = api.payload
-        return  # TODO: implement
+        try:
+            # Payload will not contain the price_date, since it is from the URL. Add it to the payload:
+            data_date = datetime.datetime.strptime(price_date, '%Y%m%d').date()
+            command_handler = current_app.config['audit_trail_command_handler']
+            row_cnt = command_handler.handle_post(data_date, payload)
+            return self.formatter.success_post(row_cnt)
+        except Exception as e:
+            return self.formatter.exception(e)
 
     def get(self, price_date):
         try:
@@ -233,7 +261,8 @@ class PricingAuditTrailv2(Resource):
         except Exception as e:
             return self.formatter.exception(e)
 
-
+# Added below line as part of the Debug with VerveSys
+@api.route('/api////pricing/column-config/<string:user_id>')
 @api.route('/api/pricing/column-config/<string:user_id>')
 class PricingColumnConfig(Resource):
     formatter = DefaultRESTFormatter()
